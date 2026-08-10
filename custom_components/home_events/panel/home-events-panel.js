@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11b";
+const PANEL_BUILD = "2026-08-11c";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -47,23 +47,21 @@ const FILTER_DIMS = [
   { key: "entity_globs", label: "Pattern", hint: "light.*stairs*" },
 ];
 
-/* `null` is not "no severity" - it is "whatever the entity's own state
- * decides", which is the only setting that can change without the config
- * changing. An alarm panel that has gone off is an alert and the same panel
- * armed is attention; a vacuum with an error is an alert and the same vacuum
- * cleaning is active. No single word covers that, so the word to use is none.
+/* An event says how loud it is, in a word, and Info is the quiet end.
  *
- * It is last and not first because it is the unusual answer: only four domains
- * have an opinion, and everything else lands on Info anyway. A new event says
- * Info, in writing, rather than starting on a setting that has to be explained
- * before it can be read. */
+ * The card also understands the key being absent, which means "let the entity's
+ * own state decide" - alarm panels, vacuums, timers and climate have opinions
+ * and nothing else does. That is a real setting and the YAML tab still writes
+ * it, but it is not one to be in by accident: this form always names a word, so
+ * an event that has never been told reads Info, which is what all but four
+ * domains would have decided anyway. */
 const SEVERITIES = [
   { key: "alert", label: "Alert" },
   { key: "attention", label: "Attention" },
   { key: "active", label: "Active" },
   { key: "info", label: "Info" },
-  { key: null, label: "Automatic" },
 ];
+const DEFAULT_SEVERITY = "info";
 const GROUPS = [
   { key: null, label: "No" },
   { key: "area", label: "Per room" },
@@ -72,6 +70,11 @@ const GROUPS = [
 const TIME_MODES = ["since", "until", "ago", "remaining"];
 /* The card's PLURAL_KEYS: the slots a counting row may word two ways. */
 const PLURAL_KEYS = ["title", "status", "icon"];
+
+/* Not a section: the option in the list that asks for one. It is a word no
+ * category id can be, because a category id is what this form makes of what
+ * somebody typed, and it never makes this. */
+const NEW_CATEGORY = "__new__";
 
 const TEXT_SLOTS = [
   { key: "title", label: "Title", hint: "The domain's own wording" },
@@ -222,6 +225,7 @@ class HomeEventsPanel extends HTMLElement {
      * is on screen. Both are where the person is looking, not what they have
      * written, so neither survives opening another event. */
     this._editing = null;
+    this._newcat = false;
     this._sub = "what";
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
@@ -476,12 +480,13 @@ class HomeEventsPanel extends HTMLElement {
     this._selected = name;
     this._renamedFrom = name;
     this._name = name;
-    this._draft = clone(event) || {};
+    this._draft = this._formShape(clone(event) || {});
     this._mode = "visual";
     this._setDirty(false);
     this._match = null;
     this._sub = "what";
     this._editing = null;
+    this._newcat = false;
     this._el.name.value = name;
     this._el.name.disabled = false;
     this._el.del.style.display = "";
@@ -489,6 +494,21 @@ class HomeEventsPanel extends HTMLElement {
     this._say("");
     this._renderList();
     this._renderPane();
+  }
+
+  /* An event as this form can say it.
+   *
+   * The form has no word for "no severity", so an event that has never been
+   * told one reads Info - and reads it in the draft as well as on the screen,
+   * because a form that shows one thing and saves another is the bug this
+   * project has already fixed twice. Nothing is written until something is
+   * saved: the draft is not dirty for having been read.
+   *
+   * The card still understands the key being absent, and the YAML tab still
+   * writes it, so nothing is taken away - only the way in by accident. */
+  _formShape(event) {
+    if (!event.severity) event.severity = DEFAULT_SEVERITY;
+    return event;
   }
 
   async _newEvent() {
@@ -502,6 +522,7 @@ class HomeEventsPanel extends HTMLElement {
     this._match = null;
     this._sub = "what";
     this._editing = null;
+    this._newcat = false;
     this._el.name.value = "";
     this._el.name.disabled = false;
     this._el.del.style.display = "none";
@@ -539,7 +560,9 @@ class HomeEventsPanel extends HTMLElement {
   async _toVisual() {
     if (this._mode === "visual") return;
     if (!(await this._confirmDiscard())) return;
-    this._draft = this._selected ? clone(this._events()[this._selected]) || {} : this._draft;
+    this._draft = this._selected
+      ? this._formShape(clone(this._events()[this._selected]) || {})
+      : this._draft;
     this._mode = "visual";
     this._setDirty(false);
     this._renderPane();
@@ -573,6 +596,9 @@ class HomeEventsPanel extends HTMLElement {
     for (const p of this._pickers) p.remove();
     this._pickers = [];
     this._pending = [];
+    /* Which drawing this is. Controls made here carry the number and refuse to
+     * write once it has moved on - see _pickerFor. */
+    this._gen = (this._gen || 0) + 1;
     this.shadowRoot.querySelectorAll(".tab").forEach((t) => {
       t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
     });
@@ -585,6 +611,10 @@ class HomeEventsPanel extends HTMLElement {
     }
     this._el.pane.innerHTML = this._formHtml();
     this._mountPickers();
+    /* A field that appeared because it was asked for should not also have to
+     * be clicked. */
+    const newcat = this._el.pane.querySelector(".newcat");
+    if (newcat) newcat.focus();
     this._recount();
   }
 
@@ -626,32 +656,27 @@ class HomeEventsPanel extends HTMLElement {
 
          <div class="field"><div class="label">Section</div><div>
            <select data-set="category">
-             <option value=""${d.category ? "" : " selected"}>Generic (default)</option>
+             <option value=""${d.category || this._newcat ? "" : " selected"}>Generic (default)</option>
              ${cats.map((c) => `<option value="${esc(c)}"` +
-               `${c === (d.category || "") ? " selected" : ""}>${esc(this._catLabel(c))}</option>`).join("")}
+               `${!this._newcat && c === (d.category || "") ? " selected" : ""}>` +
+               `${esc(this._catLabel(c))}</option>`).join("")}
              ${cats.indexOf(d.category) === -1 && d.category
-                 ? `<option value="${esc(d.category)}" selected>${esc(d.category)}</option>` : ""}
+                 ? `<option value="${esc(d.category)}"${this._newcat ? "" : " selected"}>` +
+                   `${esc(d.category)}</option>` : ""}
+             <option value="${NEW_CATEGORY}"${this._newcat ? " selected" : ""}>New section…</option>
            </select>
-           <input class="newcat" data-set="category-new" placeholder="or a new one"
-                  value="" spellcheck="false">
+           ${this._newcat
+             ? `<input class="newcat" data-set="category-new" spellcheck="false"
+                       placeholder="Name it, then press enter" value="">`
+             : ""}
          </div></div>
 
          <div class="field"><div class="label">Severity</div>
-           <div>
-             <div class="sev">${SEVERITIES.map((s) =>
-               `<button class="chipbtn sev-${esc(s.key || "none")}` +
-               `${(d.severity || null) === s.key ? " on" : ""}" ` +
-               `data-set="severity" data-value="${esc(s.key || "")}">` +
-               `<span class="dot sev-${esc(s.key || "none")}"></span>${esc(s.label)}</button>`).join("")}
-             </div>
-             ${(d.severity || null) === null
-               ? `<div class="hint">Automatic lets the entity's own state
-                   decide: an alarm that has gone off is an alert and the same
-                   panel armed is attention, a vacuum with an error is an alert
-                   and the same vacuum cleaning is active. Only alarm panels,
-                   vacuums, timers and climate have an opinion; everything else
-                   reads Info.</div>`
-               : ""}
+           <div class="sev">${SEVERITIES.map((s) =>
+             `<button class="chipbtn sev-${esc(s.key)}` +
+             `${(d.severity || DEFAULT_SEVERITY) === s.key ? " on" : ""}" ` +
+             `data-set="severity" data-value="${esc(s.key)}">` +
+             `<span class="dot sev-${esc(s.key)}"></span>${esc(s.label)}</button>`).join("")}
            </div>
          </div>
 
@@ -836,22 +861,39 @@ class HomeEventsPanel extends HTMLElement {
 
   /* ------------------------------------------------------------- filters */
 
+  /* Every criterion in a filter, in the order it is written down in.
+   *
+   * A filter is a mapping of kind to values, and both a mapping and its lists
+   * keep the order they were built in - through the store, through JSON, and
+   * through the YAML dump. So the order on screen is the order on disk, and
+   * moving a row is a change to the file rather than a preference held
+   * somewhere on the side. */
+  _critList(filter) {
+    const out = [];
+    for (const key of Object.keys(filter || {})) {
+      if (key === "match") continue;
+      const dim = FILTER_DIMS.find((d) => d.key === key);
+      if (!dim) continue;
+      (filter[key] || []).forEach((value, index) => out.push({ dim, index, value }));
+    }
+    return out;
+  }
+
   /* A filter is a list of criteria, and every criterion is the same shape: a
-   * kind, a value, and a way of taking it off again. Two areas are two rows,
-   * the same as an area and a domain are two rows, because to the person
-   * writing it they are the same kind of statement.
+   * kind, a value, a way of moving it, and a way of taking it off again. Two
+   * areas are two rows, the same as an area and a domain are two rows, because
+   * to the person writing it they are the same kind of statement.
    *
    * A chosen criterion is a line of text. Home Assistant's pickers are 56px
    * tall and there is no arguing with them, so only the one being chosen is a
    * picker; the rest sit at the height of everything else on the form. Clicking
    * a value opens it again. */
   _filterHtml(side, filter) {
-    const rows = [];
-    for (const dim of FILTER_DIMS) {
-      (filter[dim.key] || []).forEach((value, i) => {
-        rows.push(this._critRow(side, dim, i, this._chipLabel(dim, value)));
-      });
-    }
+    const list = this._critList(filter);
+    const rows = list.map(({ dim, index, value }, at) =>
+      this._critRow(side, dim, index, this._chipLabel(dim, value), {
+        first: at === 0, last: at === list.length - 1, alone: list.length < 2,
+      }));
     const being = this._editing;
     if (being && being.type === "crit" && being.side === side && being.index == null) {
       const dim = FILTER_DIMS.find((d) => d.key === being.dim);
@@ -903,7 +945,7 @@ class HomeEventsPanel extends HTMLElement {
    *
    * The two dimensions Home Assistant lends no picker for are a word each, and
    * a word is typed in the row itself. */
-  _critRow(side, dim, index, label) {
+  _critRow(side, dim, index, label, where) {
     const being = this._editing;
     const open = being && being.type === "crit" && being.side === side &&
       being.dim === dim.key && being.index === index;
@@ -915,12 +957,53 @@ class HomeEventsPanel extends HTMLElement {
       : `<button class="val${index == null ? " empty" : ""}" data-act="editcrit" ${at}
                  title="Choose another">${esc(label)}</button>` +
         (open ? `<span class="pickhost" ${slot}></span>` : "");
+    /* A row still being chosen has no place in the order yet, and one row on
+     * its own has nowhere to go. */
+    const move = where && !where.alone
+      ? `<button class="mv" data-act="critup" ${at} title="Move up"
+                 ${where.first ? "disabled" : ""}>↑</button>
+         <button class="mv" data-act="critdown" ${at} title="Move down"
+                 ${where.last ? "disabled" : ""}>↓</button>`
+      : "";
     return `<div class="crit${open ? " open" : ""}">
         <span class="kind">${esc(dim.label)}</span>
         ${value}
+        ${move}
         <button class="x row-x" data-act="${index == null ? "cancelcrit" : "unchip"}" ${at}
                 title="${index == null ? "Cancel" : "Remove"}">×</button>
       </div>`;
+  }
+
+  /* Moving a criterion.
+   *
+   * Within its own kind it swaps with its neighbour. At the edge of its kind
+   * it is the kind that moves, and the rows of that kind travel with it -
+   * because a filter is a mapping of kind to values, and "an area, then an
+   * entity, then another area" is a sentence the file cannot hold. So rows of
+   * a kind stay together, and pressing the arrow always moves the row it is
+   * on: first past its own siblings, then past the block above or below. */
+  _moveCrit(side, dimKey, index, delta) {
+    const filter = this._draft[side];
+    if (!filter) return;
+    const list = filter[dimKey] || [];
+    const to = index + delta;
+    if (to >= 0 && to < list.length) {
+      list.splice(to, 0, list.splice(index, 1)[0]);
+    } else {
+      const keys = Object.keys(filter).filter((k) => k !== "match");
+      const at = keys.indexOf(dimKey);
+      const swap = at + delta;
+      if (at === -1 || swap < 0 || swap >= keys.length) return;
+      keys.splice(swap, 0, keys.splice(at, 1)[0]);
+      /* Rebuilt rather than reassigned: a mapping's order is the order its
+       * keys were put in, and there is no other way to say it. */
+      const rebuilt = {};
+      for (const key of keys) rebuilt[key] = filter[key];
+      if (filter.match) rebuilt.match = filter.match;
+      this._draft[side] = rebuilt;
+    }
+    this._setDirty(true);
+    this._renderPane();
   }
 
   _hasEl(tag) {
@@ -935,13 +1018,20 @@ class HomeEventsPanel extends HTMLElement {
 
   /* `match` belongs to a filter that names two things, and an empty row names
    * nothing. One place decides it, so the question the form asks and the
-   * answer it stores cannot disagree. */
+   * answer it stores cannot disagree.
+   *
+   * The two sides start from opposite answers, because they are asked for
+   * opposite reasons. Include narrows: a floor and a domain means the lights
+   * on that floor, not every light in the house plus every device on the
+   * floor. Except widens: naming a room and a pattern means neither of them,
+   * and an exception that only applied where both were true would except
+   * almost nothing. */
   _syncMatch(side) {
     const filter = this._draft[side];
     if (!filter) return;
     const named = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
     if (named < 2) delete filter.match;
-    else if (!filter.match) filter.match = "all";
+    else if (!filter.match) filter.match = side === "exclude" ? "any" : "all";
   }
 
   _chipLabel(dim, value) {
@@ -1011,7 +1101,7 @@ class HomeEventsPanel extends HTMLElement {
    * it has one, a text field where it does not - and either way it is on
    * screen only while something is being chosen. */
   _pickerFor(side, dim, index) {
-    /* Which draft this control belongs to.
+    /* Which draft this control belongs to, and which drawing of the form.
      *
      * A text field commits when it is left, and "left" includes being left
      * behind: focusing something in a freshly drawn pane blurs whatever was
@@ -1020,12 +1110,21 @@ class HomeEventsPanel extends HTMLElement {
      * event inherited an area from the last one edited - a bug that would have
      * been very hard to see and impossible to reproduce on purpose.
      *
-     * The closure knows which draft it was made for, and writes to that one or
-     * to nothing. */
+     * The same late blur bites within one event too, which is what the second
+     * half of this guard is for. Adding a criterion straight after typing one
+     * put a row on the screen and then took it away again: the departing
+     * field's blur arrived after the new row had been drawn, committed a value
+     * that was already committed, and cleared the row being filled in as it
+     * went. Found by the harness rather than by use, which is the only reason
+     * it is not still in here.
+     *
+     * So the closure knows both the draft it was made for and the drawing it
+     * was made in, and writes to those or to nothing. */
     const owner = this._draft;
+    const gen = this._gen;
     const commit = (value, render = true) => {
       if (value == null || value === "") return false;
-      if (this._draft !== owner) return false;
+      if (this._draft !== owner || this._gen !== gen) return false;
       const filter = this._draft[side] || (this._draft[side] = {});
       const list = filter[dim.key] || (filter[dim.key] = []);
       if (index == null) {
@@ -1192,6 +1291,10 @@ class HomeEventsPanel extends HTMLElement {
       case "library": return this._openLibrary();
       case "tab-visual": return this._toVisual();
       case "tab-yaml": return this._openYaml();
+      case "critup":
+      case "critdown":
+        return this._moveCrit(el.dataset.side, el.dataset.dim,
+          Number(el.dataset.index), el.dataset.act === "critup" ? -1 : 1);
       case "editcrit":
         this._editing = {
           type: "crit", side: el.dataset.side, dim: el.dataset.dim,
@@ -1281,6 +1384,13 @@ class HomeEventsPanel extends HTMLElement {
       return;
     }
     if (el.tagName === "BUTTON") return;
+    /* "New section…" is a choice about what to answer with, not an answer. It
+     * puts a field there and leaves the event in the section it was already
+     * in until that field says otherwise. */
+    if (el.dataset.set === "category" && el.value === NEW_CATEGORY) {
+      this._newcat = true;
+      return this._renderPane();
+    }
     /* A new section name changes what the form draws, and redrawing takes the
      * focus with it. So it lands when the field is left, not per keystroke. */
     if (el.dataset.set === "category-new" && e.type !== "change") return;
@@ -1299,8 +1409,9 @@ class HomeEventsPanel extends HTMLElement {
     let structural = false;
 
     if (path === "category-new") {
-      if (!value) return;
-      d.category = value.trim().toLowerCase().replace(/\s+/g, "_");
+      /* Named, or thought better of: either way the field has had its turn. */
+      this._newcat = false;
+      if (value.trim()) d.category = value.trim().toLowerCase().replace(/\s+/g, "_");
       structural = true;
     } else if (path === "severity") {
       if (value) d.severity = value; else delete d.severity;
@@ -1397,7 +1508,7 @@ class HomeEventsPanel extends HTMLElement {
       this._el.del.style.display = "";
       await this._reload();
       if (this._mode === "yaml") {
-        this._draft = clone(this._events()[name]) || {};
+        this._draft = this._formShape(clone(this._events()[name]) || {});
       }
       this._say("Saved");
     } catch (err) {
@@ -1575,6 +1686,11 @@ textarea.yaml {
 .label.strong { color: var(--primary-text-color); font-weight: 500; }
 .field > div > input, .field > div > select { width: 100%; box-sizing: border-box; }
 .field .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* Two halves of one answer - whether to show a time, and which time - so they
+   sit on one line. The rule above gives everything in a field the full width,
+   which put them on two. */
+.field .inline > select, .field .inline > input { width: auto; }
+.field .inline > select { min-width: 150px; }
 .newcat { margin-top: 6px; }
 
 
@@ -1653,6 +1769,15 @@ textarea.yaml {
   padding: 6px 8px; border-radius: 6px;
 }
 .row-x:hover { background: rgba(127,127,127,.16); color: var(--error-color, #d8574a); }
+/* Ordering a filter is for reading it, not for what it selects - so the arrows
+   are quiet, and they only exist where there is somewhere to go. */
+.mv {
+  border: 0; background: none; cursor: pointer; padding: 4px 3px;
+  color: var(--secondary-text-color); font-size: 13px; line-height: 1;
+  border-radius: 6px;
+}
+.mv:hover:not([disabled]) { background: rgba(127,127,127,.16); color: var(--primary-text-color); }
+.mv[disabled] { opacity: .25; cursor: default; }
 .primary.idle {
   background: transparent; color: var(--secondary-text-color);
   border-color: var(--divider-color, rgba(127,127,127,.3)); cursor: default;
