@@ -5,9 +5,14 @@ and the only one there will be: the card validates what it is handed at
 runtime, and the panel has to be able to say "no" before writing, or the first
 sign of a typo is a dashboard that has stopped rendering.
 
-Because it is a copy, `scripts/check_schema_drift.py` reads the constants back
+Because it is a copy, `scratchpad/check_schema.py` reads the constants back
 out of home-event-card.js and fails when the two disagree. Everything below
 that has a counterpart in the card names it in a comment.
+
+Every message here is a whole sentence, starting with a capital and ending
+with a full stop, because every one of them is read by a person in a panel
+with no other context: it has to say what is wrong, where, and what would
+have been right, without being read as the tail of some other sentence.
 """
 
 from __future__ import annotations
@@ -50,8 +55,16 @@ class InvalidPreset(Exception):
     """A preset that would not survive being handed to the card."""
 
 
-def _fail(where: str, message: str) -> None:
-    raise InvalidPreset(f"{where}: {message}")
+def _fail(message: str) -> None:
+    raise InvalidPreset(message)
+
+
+def _kind(value: Any) -> str:
+    """What something is, in the words the author used to write it."""
+    return {
+        dict: "a mapping", list: "a list", str: "text", bool: "true or false",
+        int: "a number", float: "a number", type(None): "empty",
+    }.get(type(value), type(value).__name__)
 
 
 def _is_map(value: Any) -> bool:
@@ -60,50 +73,52 @@ def _is_map(value: Any) -> bool:
 
 def _validate_filter(block: Any, where: str) -> None:
     if not _is_map(block):
-        _fail(where, "a filter is a mapping of dimensions, not "
-                     f"{type(block).__name__}")
+        _fail(f"A filter is a mapping of dimensions, but {where} is "
+              f"{_kind(block)}.")
     named = []
     for key, value in block.items():
         if key in FILTER_OPTS:
             if key == "match" and value not in MATCH_MODES:
-                _fail(f"{where}.match",
-                      f"must be {' or '.join(MATCH_MODES)}, not {value!r}")
+                _fail(f'Match must be "any" or "all" in {where}, not '
+                      f"{value!r}.")
             continue
         if key not in FILTER_KEYS:
-            _fail(f"{where}.{key}",
-                  "unknown filter dimension. Known: " + ", ".join(FILTER_KEYS))
+            _fail(f'Unknown filter dimension "{key}" in {where}. The '
+                  "dimensions are: " + ", ".join(FILTER_KEYS) + ".")
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            _fail(f"{where}.{key}", "takes a list of names or ids")
+            _fail(f'Dimension "{key}" in {where} takes a list of names or ids, '
+                  f"but it is {_kind(value)}.")
         if value:
             named.append(key)
     # The card's own rule, and the one worth catching early: two dimensions in
     # one block are ambiguous, and guessing wrong selects hundreds of entities
     # where two dozen were meant.
     if len(named) > 1 and "match" not in block:
-        _fail(where,
-              f"names {len(named)} dimensions ({', '.join(named)}) and must say "
-              "`match: any` (in any of them) or `match: all` (in all of them)")
+        _fail(f"The filter in {where} names {len(named)} dimensions "
+              f"({', '.join(named)}), so it has to say which it means: "
+              '"match: any" for entities in any of them, "match: all" for '
+              "entities in all of them.")
 
 
 def _validate_conditions(conditions: Any, where: str) -> None:
     if not isinstance(conditions, list):
-        _fail(where, "a list of conditions")
+        _fail(f"Conditions are a list, but {where} is {_kind(conditions)}.")
     for i, cond in enumerate(conditions):
         at = f"{where}[{i}]"
         if not _is_map(cond):
-            _fail(at, "a condition is a mapping")
+            _fail(f"A condition is a mapping, but {at} is {_kind(cond)}.")
         kind = cond.get("condition")
         if kind not in CONDITION_KEYS:
-            _fail(at, f"unknown condition {kind!r}. Known: "
-                      + ", ".join(sorted(CONDITION_KEYS)))
+            _fail(f"Unknown condition {kind!r} in {at}. The conditions are: "
+                  + ", ".join(sorted(CONDITION_KEYS)) + ".")
         allowed = CONDITION_KEYS[kind]
         for key in cond:
             if key not in allowed:
-                _fail(f"{at}.{key}",
-                      f"not an option of a {kind} condition. Known: "
-                      + ", ".join(allowed))
+                _fail(f'Option "{key}" does not belong to a {kind} condition, '
+                      f"in {at}. A {kind} condition takes: "
+                      + ", ".join(allowed) + ".")
         if kind in ("and", "or", "not"):
             _validate_conditions(cond.get("conditions") or [], f"{at}.conditions")
 
@@ -111,14 +126,17 @@ def _validate_conditions(conditions: Any, where: str) -> None:
 def _validate_event(name: str, event: Any) -> None:
     where = f"events.{name}"
     if not _is_map(event):
-        _fail(where, "an event is a mapping of options")
+        _fail(f"An event is a mapping of options, but {where} is "
+              f"{_kind(event)}.")
     for key in event:
         if key not in EVENT_KEYS:
-            _fail(f"{where}.{key}",
-                  "unknown option. Known: " + ", ".join(EVENT_KEYS))
+            _fail(f'Unknown option "{key}" on {where}. The options are: '
+                  + ", ".join(EVENT_KEYS) + ".")
 
     if not event.get("include"):
-        _fail(where, "needs an `include` saying which entities it covers")
+        _fail(f'Event "{name}" needs an "include" saying which entities it '
+              "covers - a domain, a glob, an entity, a device, an area, a "
+              "floor or a label.")
     for side in ("include", "exclude"):
         if event.get(side) is not None:
             _validate_filter(event[side], f"{where}.{side}")
@@ -127,22 +145,22 @@ def _validate_event(name: str, event: Any) -> None:
         _validate_conditions(event["conditions"], f"{where}.conditions")
 
     if event.get("group") is not None and event["group"] not in GROUP_MODES:
-        _fail(f"{where}.group",
-              f"{event['group']!r} is not a grouping. Use `area` (one row per "
-              "room), `all` (one row for the lot) or false. `true` is the old "
-              "spelling of area")
+        _fail(f"Group on {where} must be \"area\" (one row per room), \"all\" "
+              f"(one row for the lot) or false, not {event['group']!r}. "
+              '"true" is the old spelling of "area".')
     grouped = event.get("group") in (True, "area", "all")
 
     if event.get("severity") is not None and event["severity"] not in SEVERITIES:
-        _fail(f"{where}.severity",
-              f"{event['severity']!r} is not one of " + ", ".join(SEVERITIES))
+        _fail(f"Severity {event['severity']!r} on {where} is not on the scale. "
+              "Use one of: " + ", ".join(SEVERITIES) + ".")
     if event.get("time_mode") is not None and event["time_mode"] not in TIME_MODES:
-        _fail(f"{where}.time_mode",
-              f"{event['time_mode']!r} is not one of " + ", ".join(TIME_MODES))
+        _fail(f"Time mode {event['time_mode']!r} on {where} is not one of: "
+              + ", ".join(TIME_MODES) + ".")
 
     for key in BOOL_KEYS:
         if event.get(key) is not None and not isinstance(event[key], bool):
-            _fail(f"{where}.{key}", "true or false")
+            _fail(f'Option "{key}" on {where} is true or false, but it is '
+                  f"{_kind(event[key])}.")
 
     for key in TEXT_KEYS:
         value = event.get(key)
@@ -152,52 +170,54 @@ def _validate_event(name: str, event: Any) -> None:
             # The one mapping left in the schema, and only for a row that
             # counts something.
             if not grouped:
-                _fail(f"{where}.{key}",
-                      "may only be a `one`/`many` mapping when the event "
-                      "groups - without grouping there is nothing to count")
+                _fail(f'A "one"/"many" wording is only allowed on an event '
+                      f'that groups, and {where} does not. Without grouping '
+                      f'there is nothing to count, so "{key}" is one piece of '
+                      "text.")
             unknown = [k for k in value if k not in ("one", "many")]
             if unknown:
-                _fail(f"{where}.{key}",
-                      "a wording mapping takes `one` and `many`, not "
-                      + ", ".join(unknown))
+                _fail(f'A wording mapping takes "one" and "many". '
+                      f'On {where}.{key} there is also: '
+                      + ", ".join(unknown) + ".")
             continue
-        _fail(f"{where}.{key}", "text")
+        _fail(f'Option "{key}" on {where} is text, but it is {_kind(value)}.')
 
 
 def validate_preset(data: Any) -> dict:
     """Return the preset as it will be stored, or raise InvalidPreset."""
     if not _is_map(data):
-        _fail("preset", "a mapping with `events` in it")
+        _fail(f"A preset is a mapping with \"events\" in it, but this is "
+              f"{_kind(data)}.")
 
     unknown = [k for k in data if k not in ("name", "categories", "events")]
     if unknown:
-        _fail("preset", "unknown key(s) " + ", ".join(unknown)
-              + ". A preset holds `name`, `categories` and `events`")
+        _fail("Unknown key(s) in the preset: " + ", ".join(unknown)
+              + '. A preset holds "name", "categories" and "events".')
 
     events = data.get("events")
     if events is None:
-        _fail("preset", "needs an `events` mapping, even an empty one")
+        _fail('The preset needs an "events" mapping, even an empty one.')
     if not _is_map(events):
-        _fail("preset.events",
-              "a mapping of name -> event, not a list. The name is how a card "
-              "refers to one event")
+        _fail("Events are a mapping of name to event, not "
+              f"{_kind(events)}. The name is how a card refers to one event.")
 
     for name, event in events.items():
         if not isinstance(name, str) or not name.strip():
-            _fail("preset.events", "every event needs a name")
+            _fail("Every event needs a name.")
         _validate_event(name, event)
 
     categories = data.get("categories") or []
     if not isinstance(categories, list):
-        _fail("preset.categories",
-              "a list of {id, label}, in the order the sections should read")
+        _fail("Categories are a list of {id, label}, in the order the sections "
+              f"should read, but this is {_kind(categories)}.")
     for i, cat in enumerate(categories):
         if not _is_map(cat) or not cat.get("id"):
-            _fail(f"preset.categories[{i}]", "needs an `id`")
+            _fail(f'Every entry under "categories" needs an "id", and '
+                  f"categories[{i}] has none.")
         unknown = [k for k in cat if k not in ("id", "label")]
         if unknown:
-            _fail(f"preset.categories[{i}]",
-                  "unknown key(s) " + ", ".join(unknown))
+            _fail(f"Unknown key(s) in categories[{i}]: " + ", ".join(unknown)
+                  + '. A category holds "id" and "label".')
 
     return {
         "name": data.get("name") or "",

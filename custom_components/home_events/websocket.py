@@ -1,8 +1,9 @@
 """The API the panel and the cards talk to.
 
-Six commands. Four of them are admin-only because they write; `preset` and
-`subscribe` are not, because a card runs as whoever is looking at the
-dashboard and a wall tablet is rarely an administrator.
+Nine commands. Seven of them are admin-only because they write, or because
+they hand out the whole library; `preset` and `subscribe` are not, because a
+card runs as whoever is looking at the dashboard and a wall tablet is rarely
+an administrator.
 
 YAML lives here rather than in the panel. Parsing it in the browser would mean
 shipping a parser and trusting it, and the panel would then have two ideas of
@@ -44,7 +45,7 @@ def _store(hass: HomeAssistant, connection, msg: dict) -> HomeEventsStore | None
     store = hass.data.get(DOMAIN)
     if store is None:
         connection.send_error(msg["id"], ERR_NOT_LOADED,
-                              "Home Events is not set up")
+                              "Home Events is not set up.")
     return store
 
 
@@ -84,7 +85,7 @@ def ws_preset(hass: HomeAssistant, connection, msg: dict) -> None:
     preset = store.preset(msg["preset"])
     if preset is None:
         connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"no preset named {msg['preset']!r}")
+                              f"No preset named {msg['preset']!r}.")
         return
     connection.send_result(msg["id"], {
         "schema_version": SCHEMA_VERSION,
@@ -142,13 +143,13 @@ def ws_export(hass: HomeAssistant, connection, msg: dict) -> None:
     preset = store.preset(msg["preset"])
     if preset is None:
         connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"no preset named {msg['preset']!r}")
+                              f"No preset named {msg['preset']!r}.")
         return
     if "event" in msg:
         event = preset["events"].get(msg["event"])
         if event is None:
             connection.send_error(msg["id"], ERR_NOT_FOUND,
-                                  f"no event named {msg['event']!r}")
+                                  f"No event named {msg['event']!r}.")
             return
         connection.send_result(msg["id"], {"yaml": _dump(event)})
         return
@@ -176,22 +177,25 @@ async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
     preset = store.preset(msg["preset"])
     if preset is None:
         connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"no preset named {msg['preset']!r}")
+                              f"No preset named {msg['preset']!r}.")
         return
 
     name = msg["name"].strip()
     if not name:
-        connection.send_error(msg["id"], ERR_INVALID, "an event needs a name")
+        connection.send_error(
+            msg["id"], ERR_INVALID,
+            "An event needs a name - it is what a card refers to.")
         return
     try:
         event = yaml.safe_load(msg["yaml"]) or {}
     except yaml.YAMLError as err:
-        connection.send_error(msg["id"], ERR_INVALID, f"not valid YAML: {err}")
+        connection.send_error(msg["id"], ERR_INVALID,
+                              f"That is not valid YAML. {err}")
         return
     if not isinstance(event, dict):
         connection.send_error(msg["id"], ERR_INVALID,
-                              "an event is a mapping of options, not "
-                              f"{type(event).__name__}")
+                              "An event is a mapping of options, but this is "
+                              f"{type(event).__name__}.")
         return
 
     # Rebuilt rather than mutated, so a rename keeps its place in the list
@@ -232,7 +236,7 @@ async def ws_delete_event(hass: HomeAssistant, connection, msg: dict) -> None:
     preset = store.preset(msg["preset"])
     if preset is None:
         connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"no preset named {msg['preset']!r}")
+                              f"No preset named {msg['preset']!r}.")
         return
     events = {k: v for k, v in preset["events"].items() if k != msg["name"]}
     saved = await store.async_save_preset(msg["preset"], {**preset, "events": events})
@@ -258,7 +262,8 @@ async def ws_import(hass: HomeAssistant, connection, msg: dict) -> None:
     try:
         data = yaml.safe_load(msg["yaml"]) or {}
     except yaml.YAMLError as err:
-        connection.send_error(msg["id"], ERR_INVALID, f"not valid YAML: {err}")
+        connection.send_error(msg["id"], ERR_INVALID,
+                              f"That is not valid YAML. {err}")
         return
     try:
         saved = await store.async_save_preset(msg["preset"], data)
