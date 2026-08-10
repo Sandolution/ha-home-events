@@ -221,7 +221,9 @@ class HomeEventsPanel extends HTMLElement {
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
     this._match = null;
-    this._showMatches = false;
+    /* Shown unless it is put away: the whole point of counting is being able
+     * to see what was counted. */
+    this._showMatches = true;
     this._unsub = null;
   }
 
@@ -353,10 +355,12 @@ class HomeEventsPanel extends HTMLElement {
           <select class="preset"></select>
           <span class="grow"></span>
           <button class="ghost" data-act="library">Whole library</button>
-          <button class="ghost" data-act="new">New event</button>
         </header>
         <main>
-          <aside class="list"></aside>
+          <aside class="side">
+            <button class="primary wide" data-act="new">New event</button>
+            <div class="list"></div>
+          </aside>
           <section class="editor">
             <div class="ed-head">
               <input class="name" spellcheck="false" autocomplete="off"
@@ -473,7 +477,6 @@ class HomeEventsPanel extends HTMLElement {
     this._match = null;
     this._sub = "what";
     this._editing = null;
-    this._showMatches = false;
     this._el.name.value = name;
     this._el.name.disabled = false;
     this._el.del.style.display = "";
@@ -589,7 +592,7 @@ class HomeEventsPanel extends HTMLElement {
       `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}">` +
       `${esc(label)}</button>`;
     const tabs = `<div class="subtabs">${tab("what", "What")}` +
-      `${tab("when", "When")}${tab("how", "How it reads")}</div>`;
+      `${tab("when", "When")}${tab("how", "How")}</div>`;
 
     if (sub === "when") {
       return tabs + `<div class="fs">
@@ -609,7 +612,7 @@ class HomeEventsPanel extends HTMLElement {
     return (
       tabs +
       `<div class="fs">
-         <div class="legend">How it reads</div>
+         <div class="legend">How <span class="q">— how should the row read?</span></div>
          <div class="field"><div class="label">Section</div><div>
            <select data-set="category">
              <option value=""${d.category ? "" : " selected"}>Generic (default)</option>
@@ -672,13 +675,26 @@ class HomeEventsPanel extends HTMLElement {
     const plural = PLURAL_KEYS.indexOf(slot.key) !== -1;
     const pair = plural && value && typeof value === "object";
     /* mdi has seven thousand icons in it and a text field is a poor way to
-     * find one, so where Home Assistant's picker is available it is used. */
+     * find one, so where Home Assistant's picker is available it is used - in
+     * a popover, for the same reason the criteria use one. */
     const icons = slot.key === "icon" && this._hasEl("ha-icon-picker");
-    const field = (path, current) =>
-      icons
-        ? `<div class="iconbox" data-iconslot="${path}"></div>`
-        : `<input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
+    const field = (path, current) => {
+      if (!icons) {
+        return `<input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
                   placeholder="${esc(slot.hint)}" spellcheck="false">`;
+      }
+      const being = this._editing;
+      const open = being && being.type === "icon" && being.path === path;
+      const set = typeof current === "string" && current;
+      return `<div class="crit iconrow${open ? " open" : ""}">
+          ${set ? `<ha-icon class="preview" icon="${esc(current)}"></ha-icon>` : ""}
+          <button class="val${set ? "" : " empty"}" data-act="editicon"
+                  data-path="${path}">${esc(set ? current : "Choose an icon…")}</button>
+          ${set ? `<button class="x row-x" data-act="clearicon"
+                  data-path="${path}" title="Remove">×</button>` : ""}
+          ${open ? `<div class="pop"><span data-iconslot="${path}"></span></div>` : ""}
+        </div>`;
+    };
     const body = pair
       ? `<div class="pair">
            <label><span>one</span>${field(`${slot.key}.one`, value.one)}</label>
@@ -817,24 +833,13 @@ class HomeEventsPanel extends HTMLElement {
     const rows = [];
     for (const dim of FILTER_DIMS) {
       (filter[dim.key] || []).forEach((value, i) => {
-        const editing = this._editing && this._editing.side === side &&
-          this._editing.dim === dim.key && this._editing.index === i;
-        rows.push(editing
-          ? this._critEditing(side, dim, i)
-          : `<div class="crit">
-               <span class="kind">${esc(dim.label)}</span>
-               <button class="val" data-act="editcrit" data-side="${side}"
-                       data-dim="${dim.key}" data-index="${i}"
-                       title="Choose another">${esc(this._chipLabel(dim, value))}</button>
-               <button class="x row-x" data-act="unchip" data-side="${side}"
-                       data-dim="${dim.key}" data-index="${i}"
-                       title="Remove">×</button>
-             </div>`);
+        rows.push(this._critRow(side, dim, i, this._chipLabel(dim, value)));
       });
     }
-    if (this._editing && this._editing.side === side && this._editing.index == null) {
-      const dim = FILTER_DIMS.find((d) => d.key === this._editing.dim);
-      rows.push(this._critEditing(side, dim, null));
+    const being = this._editing;
+    if (being && being.type === "crit" && being.side === side && being.index == null) {
+      const dim = FILTER_DIMS.find((d) => d.key === being.dim);
+      rows.push(this._critRow(side, dim, null, `Choose ${dim.label.toLowerCase()}…`));
     }
 
     const add = `<select class="addcrit" data-act="addcrit" data-side="${side}">
@@ -869,12 +874,25 @@ class HomeEventsPanel extends HTMLElement {
       `</div><div class="crits">${rows.join("")}${none}${add}${match}</div></div>`;
   }
 
-  /* The one row that is currently a picker. */
-  _critEditing(side, dim, index) {
-    return `<div class="crit editing">
+  /* One criterion: a kind, a value that is a button, and a way of taking it
+   * off again. The picker only ever appears in the popover below - Home
+   * Assistant's pickers are 56px tall and there is no arguing with that, so
+   * the way to keep a row at the height of the form is to keep the picker out
+   * of the row. */
+  _critRow(side, dim, index, label) {
+    const being = this._editing;
+    const open = being && being.type === "crit" && being.side === side &&
+      being.dim === dim.key && being.index === index;
+    const at = `data-side="${side}" data-dim="${dim.key}" ` +
+      `data-index="${index == null ? "" : index}"`;
+    return `<div class="crit${open ? " open" : ""}">
         <span class="kind">${esc(dim.label)}</span>
-        <span class="critslot" data-slot="${side}:${dim.key}:${index == null ? "" : index}"></span>
-        <button class="x row-x" data-act="cancelcrit" title="Cancel">×</button>
+        <button class="val${index == null ? " empty" : ""}" data-act="editcrit" ${at}
+                title="Choose another">${esc(label)}</button>
+        <button class="x row-x" data-act="${index == null ? "cancelcrit" : "unchip"}" ${at}
+                title="${index == null ? "Cancel" : "Remove"}">×</button>
+        ${open ? `<div class="pop"><span class="critslot"
+          data-slot="${side}:${dim.key}:${index == null ? "" : index}"></span></div>` : ""}
       </div>`;
   }
 
@@ -1056,7 +1074,7 @@ class HomeEventsPanel extends HTMLElement {
     box.innerHTML =
       `<span class="ok">Matches ${n} ${n === 1 ? "entity" : "entities"}</span>` +
       (n ? `<button class="link" data-act="showmatches">${
-        this._showMatches ? "hide them" : "show them"}</button>` : "") +
+        this._showMatches ? "hide" : "show them"}</button>` : "") +
       (this._showMatches ? this._matchesHtml(ids) : "");
   }
 
@@ -1071,7 +1089,7 @@ class HomeEventsPanel extends HTMLElement {
     }
     const rooms = [...byArea.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     return `<div class="matches">` + rooms.map(([area, rows]) =>
-      `<div class="mroom">${esc(area)} <span class="dim">${rows.length}</span></div>` +
+      `<div class="mroom">${esc(area)} <span class="dim">(${rows.length})</span></div>` +
       rows.slice(0, 40).map(([id, name]) =>
         `<div class="mrow"><span>${esc(name)}</span><code>${esc(id)}</code></div>`).join("") +
       (rows.length > 40 ? `<div class="mrow dim">and ${rows.length - 40} more</div>` : "")
@@ -1091,6 +1109,19 @@ class HomeEventsPanel extends HTMLElement {
   /* -------------------------------------------------------------- editing */
 
   _onClick(e) {
+    /* A popover closes when the eye moves on. Clicks inside Home Assistant's
+     * own picker never reach here - it renders its list outside this shadow
+     * root - so this only sees clicks on the form itself. */
+    const path = e.composedPath();
+    if (this._editing && !path.some((n) => n && n.classList &&
+        (n.classList.contains("pop") || n.classList.contains("val")))) {
+      /* Closing a popover is leaving the field in it, and leaving a field
+       * commits it - otherwise clicking Save with a word still typed threw
+       * the word away and then explained that the filter was empty. */
+      for (const send of this._pending) send(false);
+      this._editing = null;
+      this._renderPane();
+    }
     const el = e.composedPath().find(
       (n) => n && n.dataset && (n.dataset.act || n.dataset.event || n.dataset.set)
     );
@@ -1116,11 +1147,18 @@ class HomeEventsPanel extends HTMLElement {
       }
       case "editcrit":
         this._editing = {
-          side: el.dataset.side, dim: el.dataset.dim,
-          index: Number(el.dataset.index),
+          type: "crit", side: el.dataset.side, dim: el.dataset.dim,
+          index: el.dataset.index === "" ? null : Number(el.dataset.index),
         };
         return this._renderPane();
       case "cancelcrit":
+        this._editing = null;
+        return this._renderPane();
+      case "editicon":
+        this._editing = { type: "icon", path: el.dataset.path };
+        return this._renderPane();
+      case "clearicon":
+        this._set(el.dataset.path, "");
         this._editing = null;
         return this._renderPane();
       case "sub-what":
@@ -1186,7 +1224,7 @@ class HomeEventsPanel extends HTMLElement {
       const dim = el.value;
       el.value = "";
       if (!dim) return;
-      this._editing = { side: el.dataset.side, dim, index: null };
+      this._editing = { type: "crit", side: el.dataset.side, dim, index: null };
       return this._renderPane();
     }
     if (el && el.dataset && el.dataset.cond) {
@@ -1436,13 +1474,15 @@ main {
 }
 @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
 
+.side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.side .wide { width: 100%; }
 .list, .editor {
   background: var(--card-background-color, #fff);
   border-radius: var(--ha-card-border-radius, 16px);
   box-shadow: var(--ha-card-box-shadow, none);
   min-height: 0;
 }
-.list { padding: 8px; overflow: auto; }
+.list { padding: 8px; overflow: auto; flex: 1; }
 .editor { display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
 .empty { padding: 24px 16px; color: var(--secondary-text-color); line-height: 1.5; }
 
@@ -1501,9 +1541,14 @@ textarea.yaml {
 .filter { margin-bottom: 4px; }
 .adds { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 3px; }
 
-/* Three questions, one at a time. The form was a single scroll and the answer
-   to "where is grouping" was "further down". */
-.subtabs { display: flex; gap: 4px; padding: 2px 0 14px; }
+/* Three questions, one at a time, and they stay where they are: the pane
+   scrolls under them, so which question you are answering is never something
+   you have to scroll back up to check. */
+.subtabs {
+  display: flex; gap: 4px; padding: 2px 0 14px;
+  position: sticky; top: 0; z-index: 6;
+  background: var(--card-background-color, #fff);
+}
 .subtab {
   padding: 6px 14px; font-size: 13px; border-radius: 999px;
   color: var(--secondary-text-color);
@@ -1533,18 +1578,31 @@ textarea.yaml {
   border-radius: 8px; color: inherit; background: transparent;
 }
 .crit .val:hover { border-color: var(--primary-color); }
-.crit.editing .critslot { flex: 1; max-width: 380px; }
-.crit.editing .critslot > * {
+/* The picker, floated under the row it belongs to. Home Assistant's are 56px
+   and immovably so; keeping one out of the row is the only way the rows stay
+   at the height of the rest of the form. */
+.crit { position: relative; }
+.crit .val.empty { color: var(--secondary-text-color); border-style: dashed; }
+.crit .preview { --mdc-icon-size: 20px; width: 20px; color: var(--secondary-text-color); }
+.crit.iconrow .kind { display: none; }
+.pop {
+  position: absolute; top: calc(100% + 4px); left: 62px; right: 0;
+  z-index: 30; max-width: 420px;
+  background: var(--card-background-color, #fff);
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  border-radius: 12px; padding: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.crit.iconrow .pop { left: 0; }
+.pop > * { display: block; width: 100%; }
+.pop [data-slot] > *, .pop [data-iconslot] > * {
   display: block;
   --ha-color-form-background: transparent;
   --ha-color-border-neutral-loud: transparent;
   --mdc-typography-subtitle1-font-size: 14px;
   --mdc-icon-size: 20px;
-  border: 1px solid var(--divider-color, rgba(127,127,127,.35));
-  border-radius: 8px;
 }
-.crit.editing .fallback { border: 0; }
-.crit.editing .fallback input { width: 100%; box-sizing: border-box; }
+.pop .fallback input { width: 100%; box-sizing: border-box; }
 .addcrit {
   font-size: 13px; padding: 5px 9px; margin-top: 2px;
   color: var(--secondary-text-color);
@@ -1574,20 +1632,6 @@ textarea.yaml {
    border it sits in is this form's, and the two meet in the middle: the fill
    and the underline come off, and the wrapper carries the same outline every
    other control here has. */
-.iconbox, .adder { margin-top: 6px; max-width: 380px; }
-.iconbox { margin-top: 0; }
-.iconbox > * {
-  display: block;
-  --ha-color-form-background: transparent;
-  --ha-color-border-neutral-loud: transparent;
-  --mdc-typography-subtitle1-font-size: 14px;
-  --mdc-icon-size: 20px;
-}
-.iconbox {
-  border: 1px solid var(--divider-color, rgba(127,127,127,.35));
-  border-radius: 8px; overflow: hidden;
-}
-.iconbox:focus-within { border-color: var(--primary-color); }
 /* A row that can be taken away says so at the end of itself. */
 .field.sub { grid-template-columns: 96px minmax(0, 1fr) auto; }
 .row-x {
