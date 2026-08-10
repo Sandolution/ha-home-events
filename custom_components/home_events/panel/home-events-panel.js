@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11a";
+const PANEL_BUILD = "2026-08-11b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -47,17 +47,22 @@ const FILTER_DIMS = [
   { key: "entity_globs", label: "Pattern", hint: "light.*stairs*" },
 ];
 
-/* `null` is not "no severity" - it is "whatever the domain decides", which is
- * the only setting that can be state-dependent. An alarm panel that has gone
- * off is an alert and the same panel armed is not; a vacuum with an error is
- * an alert and the same vacuum cleaning is active. No single word covers that,
- * so the word to use is none. */
+/* `null` is not "no severity" - it is "whatever the entity's own state
+ * decides", which is the only setting that can change without the config
+ * changing. An alarm panel that has gone off is an alert and the same panel
+ * armed is attention; a vacuum with an error is an alert and the same vacuum
+ * cleaning is active. No single word covers that, so the word to use is none.
+ *
+ * It is last and not first because it is the unusual answer: only four domains
+ * have an opinion, and everything else lands on Info anyway. A new event says
+ * Info, in writing, rather than starting on a setting that has to be explained
+ * before it can be read. */
 const SEVERITIES = [
-  { key: null, label: "Automatic" },
   { key: "alert", label: "Alert" },
   { key: "attention", label: "Attention" },
   { key: "active", label: "Active" },
   { key: "info", label: "Info" },
+  { key: null, label: "Automatic" },
 ];
 const GROUPS = [
   { key: null, label: "No" },
@@ -79,7 +84,7 @@ const STARTER = {
   category: "alerts",
   include: { domains: ["binary_sensor"] },
   conditions: [{ condition: "state", state: "on" }],
-  severity: "alert",
+  severity: "info",
 };
 
 const esc = (s) =>
@@ -613,6 +618,12 @@ class HomeEventsPanel extends HTMLElement {
       tabs +
       `<div class="fs">
          <div class="legend">How <span class="q">— how should the row read?</span></div>
+
+         <div class="field"><div class="label">Enabled</div><div>
+           <label class="check"><input type="checkbox" data-set="enabled"
+             ${d.enabled === false ? "" : "checked"}> Show this event at all</label>
+         </div></div>
+
          <div class="field"><div class="label">Section</div><div>
            <select data-set="category">
              <option value=""${d.category ? "" : " selected"}>Generic (default)</option>
@@ -626,11 +637,21 @@ class HomeEventsPanel extends HTMLElement {
          </div></div>
 
          <div class="field"><div class="label">Severity</div>
-           <div class="sev">${SEVERITIES.map((s) =>
-             `<button class="chipbtn sev-${esc(s.key || "none")}` +
-             `${(d.severity || null) === s.key ? " on" : ""}" ` +
-             `data-set="severity" data-value="${esc(s.key || "")}">` +
-             `<span class="dot sev-${esc(s.key || "none")}"></span>${esc(s.label)}</button>`).join("")}
+           <div>
+             <div class="sev">${SEVERITIES.map((s) =>
+               `<button class="chipbtn sev-${esc(s.key || "none")}` +
+               `${(d.severity || null) === s.key ? " on" : ""}" ` +
+               `data-set="severity" data-value="${esc(s.key || "")}">` +
+               `<span class="dot sev-${esc(s.key || "none")}"></span>${esc(s.label)}</button>`).join("")}
+             </div>
+             ${(d.severity || null) === null
+               ? `<div class="hint">Automatic lets the entity's own state
+                   decide: an alarm that has gone off is an alert and the same
+                   panel armed is attention, a vacuum with an error is an alert
+                   and the same vacuum cleaning is active. Only alarm panels,
+                   vacuums, timers and climate have an opinion; everything else
+                   reads Info.</div>`
+               : ""}
            </div>
          </div>
 
@@ -652,11 +673,6 @@ class HomeEventsPanel extends HTMLElement {
                `${d.time_mode === m ? " selected" : ""}>${humanise(m)}</option>`).join("")}
            </select>
          </div></div>
-
-         <div class="field"><div class="label">Enabled</div><div>
-           <label class="check"><input type="checkbox" data-set="enabled"
-             ${d.enabled === false ? "" : "checked"}> Show this event at all</label>
-         </div></div>
        </div>`
     );
   }
@@ -675,8 +691,8 @@ class HomeEventsPanel extends HTMLElement {
     const plural = PLURAL_KEYS.indexOf(slot.key) !== -1;
     const pair = plural && value && typeof value === "object";
     /* mdi has seven thousand icons in it and a text field is a poor way to
-     * find one, so where Home Assistant's picker is available it is used - in
-     * a popover, for the same reason the criteria use one. */
+     * find one, so where Home Assistant's picker is available it is used - and
+     * opened out of sight, exactly as a criterion's is. */
     const icons = slot.key === "icon" && this._hasEl("ha-icon-picker");
     const field = (path, current) => {
       if (!icons) {
@@ -692,7 +708,7 @@ class HomeEventsPanel extends HTMLElement {
                   data-path="${path}">${esc(set ? current : "Choose an icon…")}</button>
           ${set ? `<button class="x row-x" data-act="clearicon"
                   data-path="${path}" title="Remove">×</button>` : ""}
-          ${open ? `<div class="pop"><span data-iconslot="${path}"></span></div>` : ""}
+          ${open ? `<span class="pickhost" data-iconslot="${path}"></span>` : ""}
         </div>`;
     };
     const body = pair
@@ -875,24 +891,35 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   /* One criterion: a kind, a value that is a button, and a way of taking it
-   * off again. The picker only ever appears in the popover below - Home
-   * Assistant's pickers are 56px tall and there is no arguing with that, so
-   * the way to keep a row at the height of the form is to keep the picker out
-   * of the row. */
+   * off again.
+   *
+   * Clicking the value chooses another, and choosing is Home Assistant's own
+   * chooser: every ha-*-picker opens a search box and a list of its own,
+   * floated over the page. That chooser is the whole of what is worth showing,
+   * so the picker field it belongs to is mounted out of sight at the row and
+   * opened straight away - one click, and the list is there. Putting the field
+   * on screen first only ever meant a second click on a control this form
+   * cannot make its own size anyway.
+   *
+   * The two dimensions Home Assistant lends no picker for are a word each, and
+   * a word is typed in the row itself. */
   _critRow(side, dim, index, label) {
     const being = this._editing;
     const open = being && being.type === "crit" && being.side === side &&
       being.dim === dim.key && being.index === index;
     const at = `data-side="${side}" data-dim="${dim.key}" ` +
       `data-index="${index == null ? "" : index}"`;
+    const slot = `data-slot="${side}:${dim.key}:${index == null ? "" : index}"`;
+    const value = open && !this._hasPicker(dim)
+      ? `<span class="inlineslot" ${slot}></span>`
+      : `<button class="val${index == null ? " empty" : ""}" data-act="editcrit" ${at}
+                 title="Choose another">${esc(label)}</button>` +
+        (open ? `<span class="pickhost" ${slot}></span>` : "");
     return `<div class="crit${open ? " open" : ""}">
         <span class="kind">${esc(dim.label)}</span>
-        <button class="val${index == null ? " empty" : ""}" data-act="editcrit" ${at}
-                title="Choose another">${esc(label)}</button>
+        ${value}
         <button class="x row-x" data-act="${index == null ? "cancelcrit" : "unchip"}" ${at}
                 title="${index == null ? "Cancel" : "Remove"}">×</button>
-        ${open ? `<div class="pop"><span class="critslot"
-          data-slot="${side}:${dim.key}:${index == null ? "" : index}"></span></div>` : ""}
       </div>`;
   }
 
@@ -931,13 +958,39 @@ class HomeEventsPanel extends HTMLElement {
     for (const slot of this._el.pane.querySelectorAll("[data-slot]")) {
       const [side, key, index] = slot.dataset.slot.split(":");
       const dim = FILTER_DIMS.find((d) => d.key === key);
-      slot.appendChild(this._pickerFor(side, dim, index === "" ? null : Number(index)));
-      const focusable = slot.querySelector("input") || slot.firstElementChild;
-      if (focusable && focusable.focus) focusable.focus();
+      const el = this._pickerFor(side, dim, index === "" ? null : Number(index));
+      slot.appendChild(el);
+      if (slot.classList.contains("pickhost")) {
+        this._openPicker(el);
+      } else {
+        const input = slot.querySelector("input");
+        if (input && input.focus) input.focus();
+      }
     }
     for (const box of this._el.pane.querySelectorAll("[data-iconslot]")) {
-      box.appendChild(this._iconFor(box.dataset.iconslot));
+      const el = this._iconFor(box.dataset.iconslot);
+      box.appendChild(el);
+      this._openPicker(el);
     }
+  }
+
+  /* Ask a picker to show its list.
+   *
+   * Five of the six have open(). ha-icon-picker does not, and the
+   * ha-generic-picker inside it does - both established in a browser rather
+   * than guessed at, along with the part that matters here: calling open()
+   * before the picker has drawn does nothing at all, silently. So this waits
+   * for it to have drawn, which is one frame on a warm module and rather more
+   * on the first use of a cold one. */
+  _openPicker(el, tries = 30) {
+    if (!el.isConnected) return;
+    const drawn = el.shadowRoot && el.shadowRoot.childElementCount;
+    const inner = drawn && el.shadowRoot.querySelector("ha-generic-picker");
+    const target = typeof el.open === "function"
+      ? el
+      : inner && typeof inner.open === "function" ? inner : null;
+    if (drawn && target) return target.open();
+    if (tries) requestAnimationFrame(() => this._openPicker(el, tries - 1));
   }
 
   /* mdi has 7000 icons and a text field is a poor way to find one of them. */
@@ -1109,15 +1162,15 @@ class HomeEventsPanel extends HTMLElement {
   /* -------------------------------------------------------------- editing */
 
   _onClick(e) {
-    /* A popover closes when the eye moves on. Clicks inside Home Assistant's
-     * own picker never reach here - it renders its list outside this shadow
-     * root - so this only sees clicks on the form itself. */
+    /* A row stops being the one being edited when the eye moves on. Clicks
+     * inside Home Assistant's own chooser never reach here - it draws its list
+     * outside this shadow root - so this only sees clicks on the form itself. */
     const path = e.composedPath();
     if (this._editing && !path.some((n) => n && n.classList &&
-        (n.classList.contains("pop") || n.classList.contains("val")))) {
-      /* Closing a popover is leaving the field in it, and leaving a field
-       * commits it - otherwise clicking Save with a word still typed threw
-       * the word away and then explained that the filter was empty. */
+        (n.classList.contains("inlineslot") || n.classList.contains("val")))) {
+      /* Leaving a field commits it - otherwise clicking Save with a word still
+       * typed threw the word away and then explained that the filter was
+       * empty. */
       for (const send of this._pending) send(false);
       this._editing = null;
       this._renderPane();
@@ -1139,12 +1192,6 @@ class HomeEventsPanel extends HTMLElement {
       case "library": return this._openLibrary();
       case "tab-visual": return this._toVisual();
       case "tab-yaml": return this._openYaml();
-      case "adddim": {
-        const f = this._draft[el.dataset.side] || (this._draft[el.dataset.side] = {});
-        f[el.dataset.dim] = f[el.dataset.dim] || [];
-        this._setDirty(true);
-        return this._renderPane();
-      }
       case "editcrit":
         this._editing = {
           type: "crit", side: el.dataset.side, dim: el.dataset.dim,
@@ -1166,14 +1213,6 @@ class HomeEventsPanel extends HTMLElement {
       case "sub-how":
         this._sub = el.dataset.act.slice(4);
         return this._renderPane();
-      case "deldim": {
-        const f = this._draft[el.dataset.side] || {};
-        delete f[el.dataset.dim];
-        this._syncMatch(el.dataset.side);
-        if (!Object.keys(f).length) delete this._draft[el.dataset.side];
-        this._setDirty(true);
-        return this._renderPane();
-      }
       case "unchip": {
         const f = this._draft[el.dataset.side] || {};
         const list = f[el.dataset.dim] || [];
@@ -1538,8 +1577,6 @@ textarea.yaml {
 .field .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .newcat { margin-top: 6px; }
 
-.filter { margin-bottom: 4px; }
-.adds { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 3px; }
 
 /* Three questions, one at a time, and they stay where they are: the pane
    scrolls under them, so which question you are answering is never something
@@ -1578,60 +1615,36 @@ textarea.yaml {
   border-radius: 8px; color: inherit; background: transparent;
 }
 .crit .val:hover { border-color: var(--primary-color); }
-/* The picker, floated under the row it belongs to. Home Assistant's are 56px
-   and immovably so; keeping one out of the row is the only way the rows stay
-   at the height of the rest of the form. */
+/* Where a picker goes to be opened without being seen.
+   Home Assistant's chooser anchors itself to the field it belongs to, so the
+   field is parked at the row - same left edge, same width - and made
+   invisible. What drops down then reads as this row's own list, and the row
+   stays at the height of the rest of the form. */
 .crit { position: relative; }
 .crit .val.empty { color: var(--secondary-text-color); border-style: dashed; }
+.crit.open .val { border-color: var(--primary-color); }
 .crit .preview { --mdc-icon-size: 20px; width: 20px; color: var(--secondary-text-color); }
 .crit.iconrow .kind { display: none; }
-.pop {
-  position: absolute; top: calc(100% + 4px); left: 62px; right: 0;
-  z-index: 30; max-width: 420px;
-  background: var(--card-background-color, #fff);
-  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
-  border-radius: 12px; padding: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+.pickhost {
+  position: absolute; left: 62px; right: 0; top: 0; height: 0;
+  overflow: hidden; opacity: 0; pointer-events: none;
 }
-.crit.iconrow .pop { left: 0; }
-.pop > * { display: block; width: 100%; }
-.pop [data-slot] > *, .pop [data-iconslot] > * {
-  display: block;
-  --ha-color-form-background: transparent;
-  --ha-color-border-neutral-loud: transparent;
-  --mdc-typography-subtitle1-font-size: 14px;
-  --mdc-icon-size: 20px;
-}
-.pop .fallback input { width: 100%; box-sizing: border-box; }
+.crit.iconrow .pickhost { left: 0; }
+.pickhost > * { display: block; width: 100%; }
+/* Typed rather than chosen: the two dimensions Home Assistant lends no picker
+   for are a word each, and the word is typed in the row itself. */
+.inlineslot { flex: 1; min-width: 0; }
+.inlineslot .fallback, .inlineslot input { width: 100%; box-sizing: border-box; }
+.inlineslot input { border-color: var(--primary-color); padding: 6px 10px; }
 .addcrit {
   font-size: 13px; padding: 5px 9px; margin-top: 2px;
   color: var(--secondary-text-color);
   border-style: dashed;
 }
 .matchline { padding-top: 8px; }
-.control { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
-  border-radius: 10px; padding: 6px; min-height: 24px; }
-.control > * { flex: 0 1 auto; }
-.control > [data-slot] { flex: 1 1 200px; min-width: 140px; }
 .fallback { display: block; }
 .fallback input { width: 100%; box-sizing: border-box; }
 
-/* The picker's own line, capped: it is one control for adding one thing, not
-   the subject of the row.
-
-   ha-entity-picker is not a text field. Inside it is ha-picker-field, and
-   inside that an ha-combo-box-item - a list item - which takes its fill from
-   --ha-color-form-background and draws its underline from
-   --ha-color-border-neutral-loud. Two rounds of MWC variables did nothing
-   because none of them were ever being read; these are, and the browser is
-   where that stopped being a guess.
-
-   Its 56px is set on a rule inside ha-picker-field's own shadow root, which
-   nothing out here can outbid. So the height is Home Assistant's, and the
-   border it sits in is this form's, and the two meet in the middle: the fill
-   and the underline come off, and the wrapper carries the same outline every
-   other control here has. */
 /* A row that can be taken away says so at the end of itself. */
 .field.sub { grid-template-columns: 96px minmax(0, 1fr) auto; }
 .row-x {
@@ -1644,28 +1657,6 @@ textarea.yaml {
   background: transparent; color: var(--secondary-text-color);
   border-color: var(--divider-color, rgba(127,127,127,.3)); cursor: default;
 }
-.adder > [data-slot] {
-  border: 1px solid var(--divider-color, rgba(127,127,127,.35));
-  border-radius: 8px;
-  overflow: hidden;
-}
-.adder > [data-slot] > * {
-  display: block;
-  --ha-color-form-background: transparent;
-  --ha-color-border-neutral-loud: transparent;
-  --mdc-typography-subtitle1-font-size: 14px;
-  --mdc-typography-body1-font-size: 14px;
-  --mdc-icon-size: 20px;
-}
-.adder > [data-slot]:focus-within { border-color: var(--primary-color); }
-
-.chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
-  padding: 3px 4px 3px 11px; font-size: 13px;
-  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--primary-color) 34%, transparent); }
-.chip.neg { background: color-mix(in srgb, var(--error-color, #d8574a) 12%, transparent);
-  border-color: color-mix(in srgb, var(--error-color, #d8574a) 34%, transparent); }
-.chip .x { padding: 0 5px; font-size: 15px; line-height: 1; color: var(--secondary-text-color); }
 
 .seg { display: inline-flex; border: 1px solid var(--divider-color, rgba(127,127,127,.3));
   border-radius: 8px; overflow: hidden; }
