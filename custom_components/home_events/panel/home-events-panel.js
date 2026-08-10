@@ -123,6 +123,38 @@ async function loadHaComponents() {
   } catch (err) {
     console.warn("home-events-panel: could not preload Home Assistant's pickers", err);
   }
+
+  /* That gets four of the six. ha-floor-picker and ha-device-picker are not
+   * reached by an entities card's editor, and measuring which ones turned up
+   * is the only way anyone would know - they simply would not appear.
+   *
+   * ha-selector is core's dispatcher: handed a selector it imports the element
+   * that draws it. So the ones still missing are asked for by name, off
+   * screen, and then thrown away. Anything that still does not turn up falls
+   * back to a text field. */
+  if (have().length < want.length && customElements.get("ha-selector")) {
+    const stage = document.createElement("div");
+    stage.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden";
+    document.body.appendChild(stage);
+    try {
+      for (const kind of ["entity", "device", "area", "floor", "label", "icon"]) {
+        const sel = document.createElement("ha-selector");
+        sel.selector = { [kind]: {} };
+        stage.appendChild(sel);
+      }
+      /* Two frames: one for the dispatcher to run, one for what it imported
+       * to define itself. */
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await Promise.race([
+        Promise.all(want.map((n) => customElements.whenDefined(n))),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]);
+    } catch (err) {
+      console.warn("home-events-panel: ha-selector would not fetch the rest", err);
+    } finally {
+      stage.remove();
+    }
+  }
   return have();
 }
 
@@ -157,6 +189,7 @@ class HomeEventsPanel extends HTMLElement {
     this._dirty = false;
     this._built = false;
     this._pickers = [];
+    this._pending = [];
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
     this._match = null;
@@ -499,6 +532,7 @@ class HomeEventsPanel extends HTMLElement {
   _renderPane(text) {
     for (const p of this._pickers) p.remove();
     this._pickers = [];
+    this._pending = [];
     this.shadowRoot.querySelectorAll(".tab").forEach((t) => {
       t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
     });
@@ -727,13 +761,13 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   _pickerFor(side, dim) {
-    const add = (value) => {
+    const add = (value, render = true) => {
       if (value == null || value === "") return;
       const filter = this._draft[side] || (this._draft[side] = {});
       const list = filter[dim.key] || (filter[dim.key] = []);
       for (const v of [].concat(value)) if (list.indexOf(v) === -1) list.push(v);
       this._dirty = true;
-      this._renderPane();
+      if (render) this._renderPane();
     };
 
     if (this._hasPicker(dim)) {
@@ -767,13 +801,23 @@ class HomeEventsPanel extends HTMLElement {
       wrap.appendChild(list);
       input.setAttribute("list", list.id);
     }
+    /* Enter commits, and so does leaving the field. Typing `light` and
+     * clicking Save used to save an event with no filter in it and then
+     * explain that it needed one, about a word still on the screen. */
+    const commit = (render) => {
+      const v = input.value.trim();
+      if (!v) return false;
+      input.value = "";
+      add(v, render);
+      return true;
+    };
+    this._pending.push(commit);
     input.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
       e.preventDefault();
-      const v = input.value.trim();
-      input.value = "";
-      add(v);
+      commit(true);
     });
+    input.addEventListener("blur", () => commit(true));
     wrap.appendChild(input);
     return wrap;
   }
@@ -992,6 +1036,11 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   async _save() {
+    /* Whatever is still sitting in an add-field counts: it is on the screen,
+     * so it is part of what was meant. No redraw - the draft is what the save
+     * reads, and redrawing mid-save would pull the button out from under the
+     * click that started this. */
+    for (const commit of this._pending) commit(false);
     try {
       if (this._mode === "library") {
         const text = this._el.pane.querySelector(".yaml").value;
@@ -1100,6 +1149,19 @@ select, input[type="text"], input:not([type]) {
   border: 1px solid var(--divider-color, rgba(127,127,127,.35));
   min-width: 0;
 }
+/* The options are drawn by the browser, not by this stylesheet, and they take
+   the colours off the element rather than off anything around it. Inheriting
+   put a dark theme's near-white text on the popup's own white background,
+   which is a list you cannot read. Both ends stated, on the select and on the
+   option, because which one a platform honours is not something to bet on. */
+select {
+  background: var(--card-background-color, #fff);
+  color: var(--primary-text-color, #000);
+}
+select option {
+  background: var(--card-background-color, #fff);
+  color: var(--primary-text-color, #000);
+}
 .bar select { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.35); padding: 5px 8px; }
 .bar select option { color: var(--primary-text-color); background: var(--card-background-color); }
 
@@ -1182,22 +1244,36 @@ textarea.yaml {
 .fallback { display: block; }
 .fallback input { width: 100%; box-sizing: border-box; }
 
-/* The picker's own line. Capped so it does not run the width of the pane -
-   it is one control for adding one thing, not the subject of the row - and
-   stripped of the filled background, which is Material's way of saying "this
-   is the field" in a form where everything else is outlined. */
+/* The picker's own line, capped: it is one control for adding one thing, not
+   the subject of the row.
+
+   ha-entity-picker is not a text field. Inside it is ha-picker-field, and
+   inside that an ha-combo-box-item - a list item - which takes its fill from
+   --ha-color-form-background and draws its underline from
+   --ha-color-border-neutral-loud. Two rounds of MWC variables did nothing
+   because none of them were ever being read; these are, and the browser is
+   where that stopped being a guess.
+
+   Its 56px is set on a rule inside ha-picker-field's own shadow root, which
+   nothing out here can outbid. So the height is Home Assistant's, and the
+   border it sits in is this form's, and the two meet in the middle: the fill
+   and the underline come off, and the wrapper carries the same outline every
+   other control here has. */
 .adder { margin-top: 6px; max-width: 380px; }
+.adder > [data-slot] {
+  border: 1px solid var(--divider-color, rgba(127,127,127,.35));
+  border-radius: 8px;
+  overflow: hidden;
+}
 .adder > [data-slot] > * {
   display: block;
-  --mdc-text-field-fill-color: transparent;
-  --mdc-text-field-ink-color: var(--primary-text-color);
-  --mdc-text-field-label-ink-color: var(--secondary-text-color);
-  --mdc-text-field-idle-line-color: var(--divider-color, rgba(127,127,127,.35));
-  --mdc-text-field-hover-line-color: var(--primary-color);
+  --ha-color-form-background: transparent;
+  --ha-color-border-neutral-loud: transparent;
   --mdc-typography-subtitle1-font-size: 14px;
   --mdc-typography-body1-font-size: 14px;
   --mdc-icon-size: 20px;
 }
+.adder > [data-slot]:focus-within { border-color: var(--primary-color); }
 
 .chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
   padding: 3px 4px 3px 11px; font-size: 13px;
