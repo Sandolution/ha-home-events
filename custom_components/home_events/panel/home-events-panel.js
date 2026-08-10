@@ -89,6 +89,12 @@ function duration(value) {
   return String(value);
 }
 
+/* window.confirm is a browser convenience rather than a guarantee. Where it
+ * is missing, the answer is yes: the alternative is a panel that cannot
+ * discard a draft because it cannot ask about it. */
+const ask = (question) =>
+  typeof confirm === "function" ? confirm(question) : true;
+
 const clone = (v) => JSON.parse(JSON.stringify(v == null ? null : v));
 
 /* Home Assistant registers ha-entity-picker and its siblings lazily, as pages
@@ -660,8 +666,17 @@ class HomeEventsPanel extends HTMLElement {
         `<span class="chip${side === "exclude" ? " neg" : ""}">${esc(this._chipLabel(dim, v))}` +
         `<button class="x" data-act="unchip" data-side="${side}" data-dim="${dim.key}" ` +
         `data-index="${i}" title="Remove">×</button></span>`).join("");
+      /* A real picker is a filled Material text field - 56px tall, its own
+       * fill, its own underline - and putting one inside the chip box next to
+       * a 24px chip makes the row look broken. It gets a line of its own,
+       * capped in width. A text fallback is small enough to stay inline. */
+      const slot = `<div data-slot="${side}:${dim.key}"></div>`;
+      const big = this._hasPicker(dim);
+      const box = chips || !big
+        ? `<div class="control">${chips}${big ? "" : slot}</div>`
+        : "";
       return `<div class="field"><div class="label">${esc(dim.label)}</div>` +
-        `<div class="control" data-slot="${side}:${dim.key}">${chips}</div></div>`;
+        `<div>${box}${big ? `<div class="adder">${slot}</div>` : ""}</div></div>`;
     }).join("");
 
     /* The one place the card demands an answer, asked at the moment it starts
@@ -671,7 +686,7 @@ class HomeEventsPanel extends HTMLElement {
            Entities in
            <span class="seg small">
              <button data-set="${side}.match" data-value="any"${
-               (filter.match || "any") === "any" ? ' class="on"' : ""}>any</button>
+               filter.match === "any" ? ' class="on"' : ""}>any</button>
              <button data-set="${side}.match" data-value="all"${
                filter.match === "all" ? ' class="on"' : ""}>all</button>
            </span>
@@ -687,6 +702,10 @@ class HomeEventsPanel extends HTMLElement {
         </div>
         ${rows}${match}
       </div>`;
+  }
+
+  _hasPicker(dim) {
+    return !!(dim.pick && customElements.get(dim.pick));
   }
 
   _chipLabel(dim, value) {
@@ -717,7 +736,7 @@ class HomeEventsPanel extends HTMLElement {
       this._renderPane();
     };
 
-    if (dim.pick && customElements.get(dim.pick)) {
+    if (this._hasPicker(dim)) {
       const el = document.createElement(dim.pick);
       el.hass = this._hass;
       el.allowCustomEntity = true;
@@ -845,6 +864,13 @@ class HomeEventsPanel extends HTMLElement {
       case "adddim": {
         const f = this._draft[el.dataset.side] || (this._draft[el.dataset.side] = {});
         f[el.dataset.dim] = f[el.dataset.dim] || [];
+        /* A second dimension is the moment the card starts demanding an
+         * answer, so the answer gets written down rather than drawn as a
+         * default the filter does not actually hold. `all` because the common
+         * shape is "this kind of thing, in this place" - and the count under
+         * the block says immediately if that was the wrong guess. */
+        const dims = Object.keys(f).filter((k) => k !== "match");
+        if (dims.length > 1 && !f.match) f.match = "all";
         this._dirty = true;
         return this._renderPane();
       }
@@ -942,6 +968,29 @@ class HomeEventsPanel extends HTMLElement {
 
   /* --------------------------------------------------------------- saving */
 
+  /* What gets stored is what somebody meant, not the scaffolding they meant it
+   * with. A dimension row is added empty and filled afterwards; one that never
+   * got filled is a row on a screen, not a fact about the house, and writing
+   * `entities: []` into the library would put it in front of the next person
+   * to read the YAML. `match` goes the same way once there is nothing left for
+   * it to decide between. */
+  _cleaned() {
+    const draft = clone(this._draft) || {};
+    for (const side of ["include", "exclude"]) {
+      const filter = draft[side];
+      if (!filter) continue;
+      for (const dim of FILTER_DIMS) {
+        if (Array.isArray(filter[dim.key]) && !filter[dim.key].length) {
+          delete filter[dim.key];
+        }
+      }
+      const dims = Object.keys(filter).filter((k) => k !== "match");
+      if (dims.length < 2) delete filter.match;
+      if (!Object.keys(filter).length) delete draft[side];
+    }
+    return draft;
+  }
+
   async _save() {
     try {
       if (this._mode === "library") {
@@ -958,7 +1007,7 @@ class HomeEventsPanel extends HTMLElement {
        * handling and the same place in the order. */
       const text = this._mode === "yaml"
         ? this._el.pane.querySelector(".yaml").value
-        : JSON.stringify(this._draft, null, 2);
+        : JSON.stringify(this._cleaned(), null, 2);
       const msg = {
         type: "home_events/save_event", preset: this._presetId, name, yaml: text,
       };
@@ -981,7 +1030,7 @@ class HomeEventsPanel extends HTMLElement {
 
   async _delete() {
     if (!this._selected) return;
-    if (!confirm(`Delete the event "${this._selected}"?`)) return;
+    if (!ask(`Delete the event "${this._selected}"?`)) return;
     try {
       await this._ws({
         type: "home_events/delete_event", preset: this._presetId, name: this._selected,
@@ -998,7 +1047,7 @@ class HomeEventsPanel extends HTMLElement {
 
   async _confirmDiscard() {
     if (!this._dirty) return true;
-    return confirm("There are unsaved changes here. Discard them?");
+    return ask("There are unsaved changes here. Discard them?");
   }
 
   _reason(err) {
@@ -1129,10 +1178,26 @@ textarea.yaml {
   border: 1px solid var(--divider-color, rgba(127,127,127,.3));
   border-radius: 10px; padding: 6px; min-height: 24px; }
 .control > * { flex: 0 1 auto; }
-.control ha-entity-picker, .control ha-area-picker, .control ha-floor-picker,
-.control ha-label-picker, .control ha-device-picker { flex: 1 1 220px; min-width: 180px; }
-.fallback { flex: 1 1 200px; display: block; }
+.control > [data-slot] { flex: 1 1 200px; min-width: 140px; }
+.fallback { display: block; }
 .fallback input { width: 100%; box-sizing: border-box; }
+
+/* The picker's own line. Capped so it does not run the width of the pane -
+   it is one control for adding one thing, not the subject of the row - and
+   stripped of the filled background, which is Material's way of saying "this
+   is the field" in a form where everything else is outlined. */
+.adder { margin-top: 6px; max-width: 380px; }
+.adder > [data-slot] > * {
+  display: block;
+  --mdc-text-field-fill-color: transparent;
+  --mdc-text-field-ink-color: var(--primary-text-color);
+  --mdc-text-field-label-ink-color: var(--secondary-text-color);
+  --mdc-text-field-idle-line-color: var(--divider-color, rgba(127,127,127,.35));
+  --mdc-text-field-hover-line-color: var(--primary-color);
+  --mdc-typography-subtitle1-font-size: 14px;
+  --mdc-typography-body1-font-size: 14px;
+  --mdc-icon-size: 20px;
+}
 
 .chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
   padding: 3px 4px 3px 11px; font-size: 13px;
