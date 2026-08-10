@@ -47,6 +47,18 @@ CONDITION_KEYS = {
     "not": ["condition", "conditions"],
 }
 
+# The order an event is written down in, which is the order the editor asks
+# its questions in: what does this cover, when does it apply, how should the
+# row read. Storage keeps insertion order and the YAML dump follows it, so
+# putting an event in this order here is what makes every export readable
+# without anybody having to tidy one up by hand.
+WRITE_ORDER = [
+    "include", "exclude", "conditions",
+    "category", "group", "severity", "time_mode", "show_time",
+    "title", "detail", "status", "icon",
+    "enabled",
+]
+
 BOOL_KEYS = ["enabled", "show_time"]
 TEXT_KEYS = ["category", "title", "detail", "status", "icon", "severity", "time_mode"]
 
@@ -183,6 +195,15 @@ def _validate_event(name: str, event: Any) -> None:
         _fail(f'Option "{key}" on {where} is text, but it is {_kind(value)}.')
 
 
+def _ordered(event: dict) -> dict:
+    """The same event, written in the order it reads in."""
+    out = {key: event[key] for key in WRITE_ORDER if key in event}
+    # Anything the schema knows and this list forgot still gets written; a key
+    # silently dropped on save is the worst failure this file could have.
+    out.update({k: v for k, v in event.items() if k not in out})
+    return out
+
+
 def validate_preset(data: Any) -> dict:
     """Return the preset as it will be stored, or raise InvalidPreset."""
     if not _is_map(data):
@@ -222,5 +243,5 @@ def validate_preset(data: Any) -> dict:
     return {
         "name": data.get("name") or "",
         "categories": categories,
-        "events": events,
+        "events": {name: _ordered(event) for name, event in events.items()},
     }

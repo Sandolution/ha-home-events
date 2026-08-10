@@ -26,31 +26,26 @@
 
 const PANEL_BUILD = "2026-08-11a";
 
-/* Five of the seven dimensions are the same five things a service call
- * targets, and Home Assistant already has the control for choosing them:
- * ha-target-picker, the "Add target" button and its dialog from the automation
- * editor. Chips with an × each, nothing tall sitting in a row, and a way of
- * choosing that people have already learnt.
+/* The seven ways of naming a set of entities, most specific first - which is
+ * the order the card's own ladder ranks them in, and the order somebody
+ * reaches for them in.
  *
- * `target` is the key it uses for each; `reg` the registry to read names from
- * when the picker is not available and the fallback has to draw chips itself. */
-const TARGET_DIMS = [
-  { key: "entities", label: "Entity", target: "entity_id", pick: "ha-entity-picker" },
-  { key: "devices", label: "Device", target: "device_id", pick: "ha-device-picker", reg: "devices" },
-  { key: "areas", label: "Area", target: "area_id", pick: "ha-area-picker", reg: "areas" },
-  { key: "floors", label: "Floor", target: "floor_id", pick: "ha-floor-picker", reg: "floors" },
-  { key: "labels", label: "Label", target: "label_id", pick: "ha-label-picker", reg: "labels" },
-];
-
-/* The two a target has no idea about. Both are text, both are short, and both
- * stay where they are: a permanent row that is empty when unused, so there is
- * nothing to add and therefore nothing to be stuck with. */
-const TEXT_DIMS = [
+ * They are one list here because they are one list on screen: a filter is a
+ * list of criteria and each criterion is one of these, chosen from a menu. The
+ * split this replaced - a target picker for five of them and text rows for the
+ * other two - made two kinds of thing out of what is one kind of thing.
+ *
+ * `pick` is the Home Assistant element that knows how to choose one, and `reg`
+ * the registry to read a name out of for display. */
+const FILTER_DIMS = [
+  { key: "entities", label: "Entity", pick: "ha-entity-picker" },
+  { key: "devices", label: "Device", pick: "ha-device-picker", reg: "devices" },
+  { key: "areas", label: "Area", pick: "ha-area-picker", reg: "areas" },
+  { key: "floors", label: "Floor", pick: "ha-floor-picker", reg: "floors" },
+  { key: "labels", label: "Label", pick: "ha-label-picker", reg: "labels" },
   { key: "domains", label: "Domain", hint: "light" },
   { key: "entity_globs", label: "Pattern", hint: "light.*stairs*" },
 ];
-
-const FILTER_DIMS = TARGET_DIMS.concat(TEXT_DIMS);
 
 /* `null` is not "no severity" - it is "whatever the domain decides", which is
  * the only setting that can be state-dependent. An alarm panel that has gone
@@ -112,27 +107,6 @@ function duration(value) {
 const ask = (question) =>
   typeof confirm === "function" ? confirm(question) : true;
 
-/* The filter block and a service call's target are the same five ideas under
- * two names. These are the only two functions that know that. */
-function toTarget(filter) {
-  const out = {};
-  for (const dim of TARGET_DIMS) {
-    const list = filter[dim.key];
-    if (list && list.length) out[dim.target] = [...list];
-  }
-  return out;
-}
-
-function fromTarget(value, filter) {
-  const target = value || {};
-  for (const dim of TARGET_DIMS) {
-    const list = target[dim.target];
-    if (list && list.length) filter[dim.key] = [...list];
-    else delete filter[dim.key];
-  }
-  return filter;
-}
-
 /* What the field shows for `for:`. A mapping becomes the clock string it
  * means; anything else is already text. */
 function durationText(value) {
@@ -156,9 +130,8 @@ const clone = (v) => JSON.parse(JSON.stringify(v == null ? null : v));
  * picker and falls back to a text field, which is no worse than typing the
  * same thing into YAML. */
 async function loadHaComponents() {
-  const want = ["ha-target-picker", "ha-entity-picker", "ha-area-picker",
-                "ha-floor-picker", "ha-label-picker", "ha-device-picker",
-                "ha-icon-picker"];
+  const want = ["ha-entity-picker", "ha-area-picker", "ha-floor-picker",
+                "ha-label-picker", "ha-device-picker", "ha-icon-picker"];
   const have = () => want.filter((n) => !!customElements.get(n));
   if (have().length === want.length) return have();
   try {
@@ -186,8 +159,8 @@ async function loadHaComponents() {
     stage.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden";
     document.body.appendChild(stage);
     try {
-      for (const kind of ["target", "entity", "device", "area", "floor",
-                          "label", "icon"]) {
+      for (const kind of ["entity", "device", "area", "floor", "label",
+                          "icon"]) {
         const sel = document.createElement("ha-selector");
         sel.selector = { [kind]: {} };
         stage.appendChild(sel);
@@ -235,11 +208,16 @@ class HomeEventsPanel extends HTMLElement {
     this._renamedFrom = null;
     this._draft = null;
     this._name = "";
-    this._mode = "form"; // form | yaml | library
+    this._mode = "visual"; // visual | yaml | library
     this._dirty = false;
     this._built = false;
     this._pickers = [];
     this._pending = [];
+    /* Which criterion is currently a picker, and which of the three questions
+     * is on screen. Both are where the person is looking, not what they have
+     * written, so neither survives opening another event. */
+    this._editing = null;
+    this._sub = "what";
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
     this._match = null;
@@ -384,7 +362,7 @@ class HomeEventsPanel extends HTMLElement {
               <input class="name" spellcheck="false" autocomplete="off"
                      placeholder="event_name">
               <div class="tabs">
-                <button data-act="tab-form" class="tab">Form</button>
+                <button data-act="tab-visual" class="tab">Visual</button>
                 <button data-act="tab-yaml" class="tab">YAML</button>
               </div>
               <span class="grow"></span>
@@ -490,9 +468,11 @@ class HomeEventsPanel extends HTMLElement {
     this._renamedFrom = name;
     this._name = name;
     this._draft = clone(event) || {};
-    this._mode = "form";
+    this._mode = "visual";
     this._setDirty(false);
     this._match = null;
+    this._sub = "what";
+    this._editing = null;
     this._showMatches = false;
     this._el.name.value = name;
     this._el.name.disabled = false;
@@ -509,9 +489,11 @@ class HomeEventsPanel extends HTMLElement {
     this._renamedFrom = null;
     this._name = "";
     this._draft = clone(STARTER);
-    this._mode = "form";
+    this._mode = "visual";
     this._setDirty(true);
     this._match = null;
+    this._sub = "what";
+    this._editing = null;
     this._el.name.value = "";
     this._el.name.disabled = false;
     this._el.del.style.display = "none";
@@ -546,17 +528,17 @@ class HomeEventsPanel extends HTMLElement {
   /* Both tabs describe the same event and only one of them is holding what
    * has been typed, so switching with unsaved work asks first rather than
    * quietly keeping whichever copy the server last saw. */
-  async _toForm() {
-    if (this._mode === "form") return;
+  async _toVisual() {
+    if (this._mode === "visual") return;
     if (!(await this._confirmDiscard())) return;
     this._draft = this._selected ? clone(this._events()[this._selected]) || {} : this._draft;
-    this._mode = "form";
+    this._mode = "visual";
     this._setDirty(false);
     this._renderPane();
   }
 
   async _openYaml() {
-    if (this._mode === "form" && !(await this._confirmDiscard())) return;
+    if (this._mode === "visual" && !(await this._confirmDiscard())) return;
     if (!this._selected) {
       /* An event that has never been saved has no YAML on the server to ask
        * for. JSON is YAML, which is the shortest honest answer here. */
@@ -587,7 +569,7 @@ class HomeEventsPanel extends HTMLElement {
       t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
     });
 
-    if (this._mode !== "form") {
+    if (this._mode !== "visual") {
       this._el.pane.innerHTML =
         `<textarea class="yaml" spellcheck="false" wrap="off" ` +
         `autocapitalize="off" autocomplete="off">${esc(text || "")}</textarea>`;
@@ -602,23 +584,30 @@ class HomeEventsPanel extends HTMLElement {
     const d = this._draft || {};
     const grouped = d.group === true || d.group === "area" || d.group === "all";
     const cats = this._categories();
+    const sub = this._sub || "what";
+    const tab = (id, label) =>
+      `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}">` +
+      `${esc(label)}</button>`;
+    const tabs = `<div class="subtabs">${tab("what", "What")}` +
+      `${tab("when", "When")}${tab("how", "How it reads")}</div>`;
 
-    return (
-      /* -------------------------------------------------------- what */
-      `<div class="fs">
+    if (sub === "when") {
+      return tabs + `<div class="fs">
+         <div class="legend">When <span class="q">— and in which state?</span></div>
+         ${this._conditionsHtml(d.conditions)}
+       </div>`;
+    }
+    if (sub === "what") {
+      return tabs + `<div class="fs">
          <div class="legend">What <span class="q">— which entities does this cover?</span></div>
          ${this._filterHtml("include", d.include || {})}
          ${this._filterHtml("exclude", d.exclude || {})}
          <div class="count" data-count></div>
-       </div>` +
+       </div>`;
+    }
 
-      /* -------------------------------------------------------- when */
-      `<div class="fs">
-         <div class="legend">When <span class="q">— and in which state?</span></div>
-         ${this._conditionsHtml(d.conditions)}
-       </div>` +
-
-      /* ------------------------------------------------ how it reads */
+    return (
+      tabs +
       `<div class="fs">
          <div class="legend">How it reads</div>
          <div class="field"><div class="label">Section</div><div>
@@ -815,33 +804,50 @@ class HomeEventsPanel extends HTMLElement {
 
   /* ------------------------------------------------------------- filters */
 
-  /* One target picker, two text rows, and the question the card asks when a
-   * filter names more than one kind of thing.
+  /* A filter is a list of criteria, and every criterion is the same shape: a
+   * kind, a value, and a way of taking it off again. Two areas are two rows,
+   * the same as an area and a domain are two rows, because to the person
+   * writing it they are the same kind of statement.
    *
-   * The target picker is Home Assistant's own and does five of the seven
-   * dimensions between them, which is why there is nothing here to add and
-   * nothing to be stuck with: what is not chosen is simply not shown. Where it
-   * cannot be loaded, the same five fall back to a row each with a text field
-   * and a way of removing the row again. */
+   * A chosen criterion is a line of text. Home Assistant's pickers are 56px
+   * tall and there is no arguing with them, so only the one being chosen is a
+   * picker; the rest sit at the height of everything else on the form. Clicking
+   * a value opens it again. */
   _filterHtml(side, filter) {
-    const target = this._hasEl("ha-target-picker")
-      ? `<div class="targetbox" data-target="${side}"></div>`
-      : this._fallbackDims(side, filter);
+    const rows = [];
+    for (const dim of FILTER_DIMS) {
+      (filter[dim.key] || []).forEach((value, i) => {
+        const editing = this._editing && this._editing.side === side &&
+          this._editing.dim === dim.key && this._editing.index === i;
+        rows.push(editing
+          ? this._critEditing(side, dim, i)
+          : `<div class="crit">
+               <span class="kind">${esc(dim.label)}</span>
+               <button class="val" data-act="editcrit" data-side="${side}"
+                       data-dim="${dim.key}" data-index="${i}"
+                       title="Choose another">${esc(this._chipLabel(dim, value))}</button>
+               <button class="x row-x" data-act="unchip" data-side="${side}"
+                       data-dim="${dim.key}" data-index="${i}"
+                       title="Remove">×</button>
+             </div>`);
+      });
+    }
+    if (this._editing && this._editing.side === side && this._editing.index == null) {
+      const dim = FILTER_DIMS.find((d) => d.key === this._editing.dim);
+      rows.push(this._critEditing(side, dim, null));
+    }
 
-    const textRows = TEXT_DIMS.map((dim) => {
-      const chips = (filter[dim.key] || []).map((v, i) =>
-        `<span class="chip${side === "exclude" ? " neg" : ""}">${esc(v)}` +
-        `<button class="x" data-act="unchip" data-side="${side}" data-dim="${dim.key}" ` +
-        `data-index="${i}" title="Remove">×</button></span>`).join("");
-      return `<div class="field"><div class="label">${esc(dim.label)}</div>` +
-        `<div class="control">${chips}<span data-slot="${side}:${dim.key}"></span></div></div>`;
-    }).join("");
+    const add = `<select class="addcrit" data-act="addcrit" data-side="${side}">
+        <option value="">+ Add criterion</option>
+        ${FILTER_DIMS.map((d) =>
+          `<option value="${esc(d.key)}">${esc(d.label)}</option>`).join("")}
+      </select>`;
 
     /* The one place the card demands an answer, asked at the moment it starts
      * to matter and not before. */
     const named = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
     const match = named > 1
-      ? `<div class="field"><div class="label"></div><div class="hint">
+      ? `<div class="hint matchline">
            Entities in
            <span class="seg small">
              <button data-set="${side}.match" data-value="any"${
@@ -850,58 +856,47 @@ class HomeEventsPanel extends HTMLElement {
                filter.match === "all" ? ' class="on"' : ""}>all</button>
            </span>
            of these
-         </div></div>`
+         </div>`
       : "";
 
-    return `<div class="filter">
-        <div class="field"><div class="label strong">` +
-          (side === "include" ? "Include" : "Except") +
-        `</div><div>${target}</div></div>
-        ${textRows}${match}
+    const none = rows.length ? "" :
+      `<div class="hint">${side === "include"
+        ? "Nothing yet. An event covers what its criteria name."
+        : "Nothing excepted."}</div>`;
+
+    return `<div class="field"><div class="label strong">` +
+      (side === "include" ? "Include" : "Except") +
+      `</div><div class="crits">${rows.join("")}${none}${add}${match}</div></div>`;
+  }
+
+  /* The one row that is currently a picker. */
+  _critEditing(side, dim, index) {
+    return `<div class="crit editing">
+        <span class="kind">${esc(dim.label)}</span>
+        <span class="critslot" data-slot="${side}:${dim.key}:${index == null ? "" : index}"></span>
+        <button class="x row-x" data-act="cancelcrit" title="Cancel">×</button>
       </div>`;
-  }
-
-  /* No target picker: a row per dimension, added when asked for and removed
-   * the same way. The × is the whole point - a row you cannot get rid of is
-   * worse than one you have to ask for. */
-  _fallbackDims(side, filter) {
-    const used = TARGET_DIMS.filter((d) => filter[d.key] !== undefined);
-    const free = TARGET_DIMS.filter((d) => filter[d.key] === undefined);
-    const rows = used.map((dim) => {
-      const chips = (filter[dim.key] || []).map((v, i) =>
-        `<span class="chip${side === "exclude" ? " neg" : ""}">${esc(this._chipLabel(dim, v))}` +
-        `<button class="x" data-act="unchip" data-side="${side}" data-dim="${dim.key}" ` +
-        `data-index="${i}" title="Remove">×</button></span>`).join("");
-      return `<div class="field sub"><div class="label">${esc(dim.label)}</div>` +
-        `<div class="control">${chips}<span data-slot="${side}:${dim.key}"></span></div>` +
-        `<button class="x row-x" data-act="deldim" data-side="${side}" ` +
-        `data-dim="${dim.key}" title="Remove ${esc(dim.label.toLowerCase())}">×</button></div>`;
-    }).join("");
-    return `<div class="adds">${free.map((d) =>
-      `<button class="ghost sm" data-act="adddim" data-side="${side}" ` +
-      `data-dim="${d.key}">+ ${esc(d.label)}</button>`).join("")}</div>${rows}`;
-  }
-
-  /* `match` belongs to a filter that names two things, and an empty row names
-   * nothing. One place decides it, so the question the form asks and the
-   * answer it stores cannot disagree - which they did: the row appearing set
-   * `match`, and the row being empty hid the control that showed it. */
-  _syncMatch(side) {
-    const filter = this._draft[side];
-    if (!filter) return;
-    const named = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
-    if (named < 2) delete filter.match;
-    else if (!filter.match) filter.match = "all";
   }
 
   _hasEl(tag) {
     return !!customElements.get(tag);
   }
 
-  /* A dimension has a picker of its own only in the fallback layout; with the
-   * target picker there, those five dimensions have no rows to put one in. */
+  /* A dimension has a picker of its own only where Home Assistant has one to
+   * lend; the other two are text either way. */
   _hasPicker(dim) {
     return !!(dim.pick && this._hasEl(dim.pick));
+  }
+
+  /* `match` belongs to a filter that names two things, and an empty row names
+   * nothing. One place decides it, so the question the form asks and the
+   * answer it stores cannot disagree. */
+  _syncMatch(side) {
+    const filter = this._draft[side];
+    if (!filter) return;
+    const named = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
+    if (named < 2) delete filter.match;
+    else if (!filter.match) filter.match = "all";
   }
 
   _chipLabel(dim, value) {
@@ -916,42 +911,15 @@ class HomeEventsPanel extends HTMLElement {
    * into it afterwards. */
   _mountPickers() {
     for (const slot of this._el.pane.querySelectorAll("[data-slot]")) {
-      const [side, key] = slot.dataset.slot.split(":");
+      const [side, key, index] = slot.dataset.slot.split(":");
       const dim = FILTER_DIMS.find((d) => d.key === key);
-      slot.appendChild(this._pickerFor(side, dim));
-    }
-    for (const box of this._el.pane.querySelectorAll("[data-target]")) {
-      box.appendChild(this._targetFor(box.dataset.target));
+      slot.appendChild(this._pickerFor(side, dim, index === "" ? null : Number(index)));
+      const focusable = slot.querySelector("input") || slot.firstElementChild;
+      if (focusable && focusable.focus) focusable.focus();
     }
     for (const box of this._el.pane.querySelectorAll("[data-iconslot]")) {
       box.appendChild(this._iconFor(box.dataset.iconslot));
     }
-  }
-
-  /* Home Assistant's own target picker, holding the five dimensions that are
-   * also the five things a service call can be aimed at. Its value is that
-   * vocabulary - entity_id, device_id, area_id, floor_id, label_id - and this
-   * is the only place the two spellings meet. */
-  _targetFor(side) {
-    const el = document.createElement("ha-target-picker");
-    el.hass = this._hass;
-    el.value = toTarget(this._draft[side] || {});
-    el.addEventListener("value-changed", (e) => {
-      e.stopPropagation();
-      const filter = this._draft[side] || (this._draft[side] = {});
-      const before = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
-      fromTarget(e.detail && e.detail.value, filter);
-      this._syncMatch(side);
-      if (!Object.keys(filter).length) delete this._draft[side];
-      this._setDirty(true);
-      const after = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
-      /* Redrawing closes the picker's own dialog, so it happens only when the
-       * form has to change shape: crossing one dimension is when the card
-       * starts asking any-or-all, and that question has to appear. */
-      if ((before > 1) !== (after > 1)) this._renderPane();
-      else this._recount();
-    });
-    return el;
   }
 
   /* mdi has 7000 icons and a text field is a poor way to find one of them. */
@@ -968,26 +936,53 @@ class HomeEventsPanel extends HTMLElement {
     return el;
   }
 
-  _pickerFor(side, dim) {
-    const add = (value, render = true) => {
-      if (value == null || value === "") return;
+  /* The control for choosing one criterion's value. Home Assistant's own where
+   * it has one, a text field where it does not - and either way it is on
+   * screen only while something is being chosen. */
+  _pickerFor(side, dim, index) {
+    /* Which draft this control belongs to.
+     *
+     * A text field commits when it is left, and "left" includes being left
+     * behind: focusing something in a freshly drawn pane blurs whatever was
+     * focused before, and a listener from the previous render then wrote its
+     * old value into whichever event happened to be open now. Opening a new
+     * event inherited an area from the last one edited - a bug that would have
+     * been very hard to see and impossible to reproduce on purpose.
+     *
+     * The closure knows which draft it was made for, and writes to that one or
+     * to nothing. */
+    const owner = this._draft;
+    const commit = (value, render = true) => {
+      if (value == null || value === "") return false;
+      if (this._draft !== owner) return false;
       const filter = this._draft[side] || (this._draft[side] = {});
       const list = filter[dim.key] || (filter[dim.key] = []);
-      for (const v of [].concat(value)) if (list.indexOf(v) === -1) list.push(v);
+      if (index == null) {
+        if (list.indexOf(value) === -1) list.push(value);
+      } else {
+        list[index] = value;
+      }
       this._syncMatch(side);
       this._setDirty(true);
+      this._editing = null;
+      /* Saving flushes these without redrawing: the draft is what the save
+       * reads, and pulling the pane out from under the click that started it
+       * is how a Save button stops working. */
       if (render) this._renderPane();
+      return true;
     };
+    const current = index == null
+      ? "" : ((this._draft[side] || {})[dim.key] || [])[index] || "";
 
     if (this._hasPicker(dim)) {
       const el = document.createElement(dim.pick);
       el.hass = this._hass;
       el.allowCustomEntity = true;
+      el.value = current;
       el.addEventListener("value-changed", (e) => {
         e.stopPropagation();
         const v = e.detail && e.detail.value;
-        el.value = "";
-        add(v);
+        if (v) commit(v);
       });
       return el;
     }
@@ -999,6 +994,7 @@ class HomeEventsPanel extends HTMLElement {
     const input = document.createElement("input");
     input.placeholder = dim.hint || "add…";
     input.spellcheck = false;
+    input.value = current;
     if (dim.key === "domains") {
       const list = document.createElement("datalist");
       list.id = `domains-${side}`;
@@ -1013,20 +1009,18 @@ class HomeEventsPanel extends HTMLElement {
     /* Enter commits, and so does leaving the field. Typing `light` and
      * clicking Save used to save an event with no filter in it and then
      * explain that it needed one, about a word still on the screen. */
-    const commit = (render) => {
-      const v = input.value.trim();
-      if (!v) return false;
-      input.value = "";
-      add(v, render);
-      return true;
-    };
-    this._pending.push(commit);
+    const send = (render = true) => commit(input.value.trim(), render);
+    this._pending.push(send);
     input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        this._editing = null;
+        return this._renderPane();
+      }
       if (e.key !== "Enter") return;
       e.preventDefault();
-      commit(true);
+      send();
     });
-    input.addEventListener("blur", () => commit(true));
+    input.addEventListener("blur", () => send());
     wrap.appendChild(input);
     return wrap;
   }
@@ -1112,7 +1106,7 @@ class HomeEventsPanel extends HTMLElement {
       case "delete": return this._delete();
       case "new": return this._newEvent();
       case "library": return this._openLibrary();
-      case "tab-form": return this._toForm();
+      case "tab-visual": return this._toVisual();
       case "tab-yaml": return this._openYaml();
       case "adddim": {
         const f = this._draft[el.dataset.side] || (this._draft[el.dataset.side] = {});
@@ -1120,6 +1114,20 @@ class HomeEventsPanel extends HTMLElement {
         this._setDirty(true);
         return this._renderPane();
       }
+      case "editcrit":
+        this._editing = {
+          side: el.dataset.side, dim: el.dataset.dim,
+          index: Number(el.dataset.index),
+        };
+        return this._renderPane();
+      case "cancelcrit":
+        this._editing = null;
+        return this._renderPane();
+      case "sub-what":
+      case "sub-when":
+      case "sub-how":
+        this._sub = el.dataset.act.slice(4);
+        return this._renderPane();
       case "deldim": {
         const f = this._draft[el.dataset.side] || {};
         delete f[el.dataset.dim];
@@ -1172,6 +1180,15 @@ class HomeEventsPanel extends HTMLElement {
 
   _onInput(e) {
     const el = e.target;
+    /* Choosing a kind from the menu opens a row of that kind, waiting for its
+     * value. The menu itself never holds a selection. */
+    if (el && el.dataset && el.dataset.act === "addcrit") {
+      const dim = el.value;
+      el.value = "";
+      if (!dim) return;
+      this._editing = { side: el.dataset.side, dim, index: null };
+      return this._renderPane();
+    }
     if (el && el.dataset && el.dataset.cond) {
       const [index, field] = el.dataset.cond.split(".");
       const value = el.type === "checkbox" ? el.checked : el.value;
@@ -1274,7 +1291,7 @@ class HomeEventsPanel extends HTMLElement {
      * so it is part of what was meant. No redraw - the draft is what the save
      * reads, and redrawing mid-save would pull the button out from under the
      * click that started this. */
-    for (const commit of this._pending) commit(false);
+    for (const send of this._pending) send(false);
     try {
       if (this._mode === "library") {
         const text = this._el.pane.querySelector(".yaml").value;
@@ -1483,6 +1500,57 @@ textarea.yaml {
 
 .filter { margin-bottom: 4px; }
 .adds { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 3px; }
+
+/* Three questions, one at a time. The form was a single scroll and the answer
+   to "where is grouping" was "further down". */
+.subtabs { display: flex; gap: 4px; padding: 2px 0 14px; }
+.subtab {
+  padding: 6px 14px; font-size: 13px; border-radius: 999px;
+  color: var(--secondary-text-color);
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+}
+.subtab.on {
+  color: var(--primary-text-color);
+  border-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+
+/* One criterion, one line. Two areas are two lines, the same as an area and a
+   domain are two lines, because they are the same kind of statement. */
+.crits { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.crit {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 32px;
+}
+.crit .kind {
+  font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--secondary-text-color);
+  width: 62px; flex: none;
+}
+.crit .val {
+  flex: 1; text-align: left; font-size: 14px; padding: 6px 10px;
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  border-radius: 8px; color: inherit; background: transparent;
+}
+.crit .val:hover { border-color: var(--primary-color); }
+.crit.editing .critslot { flex: 1; max-width: 380px; }
+.crit.editing .critslot > * {
+  display: block;
+  --ha-color-form-background: transparent;
+  --ha-color-border-neutral-loud: transparent;
+  --mdc-typography-subtitle1-font-size: 14px;
+  --mdc-icon-size: 20px;
+  border: 1px solid var(--divider-color, rgba(127,127,127,.35));
+  border-radius: 8px;
+}
+.crit.editing .fallback { border: 0; }
+.crit.editing .fallback input { width: 100%; box-sizing: border-box; }
+.addcrit {
+  font-size: 13px; padding: 5px 9px; margin-top: 2px;
+  color: var(--secondary-text-color);
+  border-style: dashed;
+}
+.matchline { padding-top: 8px; }
 .control { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   border: 1px solid var(--divider-color, rgba(127,127,127,.3));
   border-radius: 10px; padding: 6px; min-height: 24px; }
@@ -1506,7 +1574,6 @@ textarea.yaml {
    border it sits in is this form's, and the two meet in the middle: the fill
    and the underline come off, and the wrapper carries the same outline every
    other control here has. */
-.targetbox { --ha-target-picker-max-width: 100%; display: block; }
 .iconbox, .adder { margin-top: 6px; max-width: 380px; }
 .iconbox { margin-top: 0; }
 .iconbox > * {
