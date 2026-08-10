@@ -141,8 +141,8 @@
  *                    merged with any written here, and an event written here
  *                    wins the name. Without the integration, or without this
  *                    key, the card reads only what is on the dashboard.
- *                    Categories come from the preset too, unless the card
- *                    declares its own
+ *                    Categories and `sort` come from the preset too, unless
+ *                    the card declares its own
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name            default recent
  *   max:             integer, default 14; the rest become a "+n more" line
@@ -373,7 +373,7 @@
  *          here - Home Assistant already knows those in the user's language.
  */
 
-const CARD_BUILD = "2026-08-10d";
+const CARD_BUILD = "2026-08-10e";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1605,6 +1605,9 @@ class HomeEventCard extends HTMLElement {
     /* Whether the dashboard arranged its own sections. If it did, a preset's
      * categories are not allowed to reorder them underneath it. */
     this._ownCategories = Array.isArray(given.categories) && given.categories.length > 0;
+    /* Same rule for ordering: a card that says how it wants its rows keeps
+     * saying it, and a card that says nothing follows the library. */
+    this._ownSort = given.sort != null;
 
     this._config = cfg;
     this._sig = null; // force a redraw on the next hass tick
@@ -1806,6 +1809,9 @@ class HomeEventCard extends HTMLElement {
     }
     if (!this._ownCategories && Array.isArray(data.categories)) {
       cfg.categories = data.categories;
+    }
+    if (!this._ownSort && SORT_MODES.indexOf(data.sort) !== -1) {
+      cfg.sort = data.sort;
     }
     this._sig = null;
     this._idx = null;

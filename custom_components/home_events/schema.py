@@ -212,10 +212,17 @@ def validate_preset(data: Any) -> dict:
         _fail(f"A preset is a mapping with \"events\" in it, but this is "
               f"{_kind(data)}.")
 
-    unknown = [k for k in data if k not in ("name", "categories", "events")]
+    unknown = [k for k in data if k not in ("name", "sort", "categories", "events")]
     if unknown:
         _fail("Unknown key(s) in the preset: " + ", ".join(unknown)
-              + '. A preset holds "name", "categories" and "events".')
+              + '. A preset holds "name", "sort", "categories" and "events".')
+
+    # How the rows in a section read, for every section that does not say
+    # otherwise. A card that states its own `sort` keeps it; this is what a
+    # card that says nothing follows.
+    if data.get("sort") is not None and data["sort"] not in SORT_MODES:
+        _fail(f"Sort {data['sort']!r} is not one of: " + ", ".join(SORT_MODES)
+              + ".")
 
     events = data.get("events")
     if events is None:
@@ -245,8 +252,13 @@ def validate_preset(data: Any) -> dict:
             _fail(f"Sort {cat['sort']!r} on section \"{cat['id']}\" is not one "
                   "of: " + ", ".join(SORT_MODES) + ".")
 
-    return {
+    out = {
         "name": data.get("name") or "",
         "categories": categories,
         "events": {name: _ordered(event) for name, event in events.items()},
     }
+    # Only when it says something: a preset that has never been given a
+    # default should not grow a key saying it has none.
+    if data.get("sort"):
+        out["sort"] = data["sort"]
+    return out

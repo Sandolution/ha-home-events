@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11f";
+const PANEL_BUILD = "2026-08-11h";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -97,9 +97,15 @@ const TEXT_SLOTS = [
   { key: "icon", label: "Icon", hint: "mdi:…" },
 ];
 
+/* What a new event starts as.
+ *
+ * Deliberately without an `include`: what an event covers is the one thing
+ * only its author knows, and a filter put there to be helpful is a filter
+ * somebody has to notice and take off. The state condition is different - it
+ * is the same for nearly every event ever written here, and it is one field to
+ * change rather than a criterion to remove. */
 const STARTER = {
   category: "alerts",
-  include: { domains: ["binary_sensor"] },
   conditions: [{ condition: "state", state: "on" }],
   severity: "info",
 };
@@ -605,6 +611,7 @@ class HomeEventsPanel extends HTMLElement {
       if (!declared.some((c) => c.id === id)) declared.push({ id, label: "", sort: "" });
     }
     this._sections = declared;
+    this._presetSort = this._preset().sort || "";
     this._el.name.value = this._preset().name || this._presetId;
     this._el.name.disabled = true;
     this._el.del.style.display = "none";
@@ -625,7 +632,9 @@ class HomeEventsPanel extends HTMLElement {
                  value="${esc(c.label || humanise(c.id))}">
           <select data-sec="${i}.sort">
             ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
-              `${(c.sort || "") === o.key ? " selected" : ""}>${esc(o.label)}</option>`).join("")}
+              `${(c.sort || "") === o.key ? " selected" : ""}>` +
+              `${esc(o.key ? o.label
+                : this._presetSort ? "Same as above" : "As the card says")}</option>`).join("")}
           </select>
           <span class="dim count-of">${used} ${used === 1 ? "event" : "events"}</span>
           <button class="mv" data-act="secup" data-index="${i}" title="Move up"
@@ -639,6 +648,14 @@ class HomeEventsPanel extends HTMLElement {
     return `<div class="fs">
         <div class="legend">Sections
           <span class="q">— the order they read in, and how each sorts its rows</span></div>
+        <div class="field"><div class="label">Rows read</div><div class="inline">
+          <select data-presetsort>
+            ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
+              `${this._presetSort === o.key ? " selected" : ""}>` +
+              `${esc(o.key ? o.label : "As the card says")}</option>`).join("")}
+          </select>
+          <span class="hint">unless a section below says otherwise</span>
+        </div></div>
         <div class="crits wide">${rows}
           <button class="ghost sm" data-act="secadd">+ Add section</button>
         </div>
@@ -655,6 +672,8 @@ class HomeEventsPanel extends HTMLElement {
     /* A row that was added and never named has nothing to arrange, and two
        rows that ended up with one id would be one section twice. */
     const seen = new Set();
+    if (this._presetSort) preset.sort = this._presetSort;
+    else delete preset.sort;
     preset.categories = this._sections.filter((c) => {
       if (!c.id || seen.has(c.id)) return false;
       seen.add(c.id);
@@ -1665,6 +1684,13 @@ class HomeEventsPanel extends HTMLElement {
       this._editing = { type: "crit", side: el.dataset.side, dim, index: null };
       return this._renderPane();
     }
+    if (el && el.dataset && el.dataset.presetsort !== undefined) {
+      this._presetSort = el.value;
+      this._setDirty(true);
+      /* The sections below read "same as above" or "as the card says"
+       * depending on this, so they are redrawn with it. */
+      return this._renderPane();
+    }
     if (el && el.dataset && el.dataset.sec) {
       const [index, field] = el.dataset.sec.split(".");
       const row = this._sections[Number(index)];
@@ -2053,6 +2079,7 @@ textarea.yaml {
 .label.strong { color: var(--primary-text-color); font-weight: 500; }
 .field > div > input, .field > div > select { width: 100%; box-sizing: border-box; }
 .field .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.field .inline > .hint { padding-top: 0; }
 /* Two halves of one answer - whether to show a time, and which time - so they
    sit on one line. The rule above gives everything in a field the full width,
    which put them on two. */
