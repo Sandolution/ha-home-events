@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11c";
+const PANEL_BUILD = "2026-08-11d";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -68,6 +68,10 @@ const GROUPS = [
   { key: "all", label: "One row" },
 ];
 const TIME_MODES = ["since", "until", "ago", "remaining"];
+/* The conditions that hold other conditions. Core's own three, and the card
+ * evaluates them the way core does: and passes when every one inside passes,
+ * or when any does, not when none does. */
+const GROUP_KINDS = ["and", "or", "not"];
 /* The card's PLURAL_KEYS: the slots a counting row may word two ways. */
 const PLURAL_KEYS = ["title", "status", "icon"];
 
@@ -226,6 +230,7 @@ class HomeEventsPanel extends HTMLElement {
      * written, so neither survives opening another event. */
     this._editing = null;
     this._newcat = false;
+    this._newCategory = null;
     this._sub = "what";
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
@@ -349,6 +354,12 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   _catLabel(id) {
+    /* A section named in this editor and not yet saved is still the name that
+     * was typed: the store has not been told about it, and until it is, this
+     * is the only place that knows how it is spelled. */
+    if (this._newCategory && this._newCategory.id === id) {
+      return this._newCategory.label;
+    }
     const c = (this._preset().categories || []).find((x) => x.id === id);
     return (c && c.label) || humanise(id);
   }
@@ -487,6 +498,7 @@ class HomeEventsPanel extends HTMLElement {
     this._sub = "what";
     this._editing = null;
     this._newcat = false;
+    this._newCategory = null;
     this._el.name.value = name;
     this._el.name.disabled = false;
     this._el.del.style.display = "";
@@ -523,6 +535,7 @@ class HomeEventsPanel extends HTMLElement {
     this._sub = "what";
     this._editing = null;
     this._newcat = false;
+    this._newCategory = null;
     this._el.name.value = "";
     this._el.name.disabled = false;
     this._el.del.style.display = "none";
@@ -651,7 +664,7 @@ class HomeEventsPanel extends HTMLElement {
 
          <div class="field"><div class="label">Enabled</div><div>
            <label class="check"><input type="checkbox" data-set="enabled"
-             ${d.enabled === false ? "" : "checked"}> Show this event at all</label>
+             ${d.enabled === false ? "" : "checked"}> Show this event</label>
          </div></div>
 
          <div class="field"><div class="label">Section</div><div>
@@ -662,7 +675,7 @@ class HomeEventsPanel extends HTMLElement {
                `${esc(this._catLabel(c))}</option>`).join("")}
              ${cats.indexOf(d.category) === -1 && d.category
                  ? `<option value="${esc(d.category)}"${this._newcat ? "" : " selected"}>` +
-                   `${esc(d.category)}</option>` : ""}
+                   `${esc(this._catLabel(d.category))}</option>` : ""}
              <option value="${NEW_CATEGORY}"${this._newcat ? " selected" : ""}>New section…</option>
            </select>
            ${this._newcat
@@ -691,7 +704,7 @@ class HomeEventsPanel extends HTMLElement {
 
          <div class="field"><div class="label">Time</div><div class="inline">
            <label class="check"><input type="checkbox" data-set="show_time"
-             ${d.show_time === false ? "" : "checked"}> Show it</label>
+             ${d.show_time === false ? "" : "checked"}> Show</label>
            <select data-set="time_mode"${d.show_time === false ? " disabled" : ""}>
              <option value="">Default (since)</option>
              ${TIME_MODES.map((m) => `<option value="${m}"` +
@@ -736,15 +749,21 @@ class HomeEventsPanel extends HTMLElement {
           ${open ? `<span class="pickhost" data-iconslot="${path}"></span>` : ""}
         </div>`;
     };
+    /* A grouped row stands for however many entities it collected, so these
+       slots may be worded twice: once for a row that turned out to be a
+       single thing, once for a row that is a tally. The button says what
+       pressing it does, and the labels say when each wording is used. */
     const body = pair
       ? `<div class="pair">
-           <label><span>one</span>${field(`${slot.key}.one`, value.one)}</label>
-           <label><span>many</span>${field(`${slot.key}.many`, value.many)}</label>
+           <label><span>if it is one</span>${field(`${slot.key}.one`, value.one)}</label>
+           <label><span>if it is more</span>${field(`${slot.key}.many`, value.many)}</label>
          </div>`
       : field(slot.key, value);
     const toggle = plural && grouped
       ? `<button class="link" data-act="plural" data-value="${slot.key}">` +
-        (pair ? "one wording" : "two wordings, by count") + `</button>`
+        (pair
+          ? "Use one wording, whatever the count"
+          : "Word it differently when it counts more than one") + `</button>`
       : "";
     return `<div class="field"><div class="label">${esc(slot.label)}</div>` +
       `<div>${body}${toggle}</div></div>`;
@@ -752,36 +771,49 @@ class HomeEventsPanel extends HTMLElement {
 
   /* Conditions, as rows.
    *
-   * The vocabulary is core's own - state, numeric_state, time, and `for:` -
-   * so the rows are the automation editor's rows, near enough that there is
-   * nothing new to learn. What this deliberately does not do is draw a nested
-   * and/or/not group: three levels of nesting drawn badly is worse than two
-   * lines of YAML read well, so a nested group says what it is and stays
-   * exactly as it was written.
+   * The vocabulary is core's own - state, numeric_state, time, `for:`, and the
+   * and/or/not groups - so the rows are the automation editor's rows, near
+   * enough that there is nothing new to learn. A group holds conditions and is
+   * drawn as one: a word for how its contents add up, and the contents
+   * indented under it, however deep that goes.
    *
-   * `entity` is not offered either. A condition here tests the entity the
-   * event matched, which is the whole point of the filter above it; pointing
-   * one at some other entity is a real thing the card supports and a rare
-   * thing to want, so it lives on the YAML tab. */
-  _conditionsHtml(conditions) {
+   * Every control carries the path to the condition it belongs to - "0",
+   * "0.2", "0.2.1" - so one set of handlers works at any depth. The separator
+   * between the path and the field is a colon, because the path already uses
+   * dots.
+   *
+   * `entity` is not offered. A condition here tests the entity the event
+   * matched, which is the whole point of the filter above it; pointing one at
+   * some other entity is a real thing the card supports and a rare thing to
+   * want, so it lives on the YAML tab. */
+  _conditionsHtml(conditions, path = "") {
     const list = Array.isArray(conditions) ? conditions : [];
-    const rows = list.map((c, i) => this._condHtml(c, i)).join("");
-    const empty = list.length ? "" :
-      `<div class="hint">No conditions, so this event shows every entity it
-        covers, in any state.</div>`;
-    return rows + empty +
-      `<button class="ghost sm" data-act="addcond">+ Add condition</button>`;
+    const rows = list
+      .map((c, i) => this._condHtml(c, path === "" ? String(i) : `${path}.${i}`))
+      .join("");
+    const empty = list.length ? "" : path === ""
+      ? `<div class="hint">No conditions, so this event shows every entity it
+          covers, in any state.</div>`
+      : `<div class="hint">Nothing in here yet.</div>`;
+    /* What a list of conditions means, said once it means anything: the card
+     * requires all of them, which is worth saying where a group two lines
+     * below says "any of". */
+    const all = list.length > 1 && path === ""
+      ? `<div class="hint">All of these have to be true.</div>` : "";
+    return all + rows + empty +
+      `<button class="ghost sm" data-act="addcond" data-path="${path}">` +
+      `+ Add condition</button>`;
   }
 
-  _condHtml(c, i) {
+  _condHtml(c, path) {
     const kind = c.condition;
     const pick = (name, value, options) =>
-      `<select data-cond="${i}.${name}">` +
+      `<select data-cond="${path}:${name}">` +
       options.map(([v, label]) =>
         `<option value="${esc(v)}"${String(value) === v ? " selected" : ""}>` +
         `${esc(label)}</option>`).join("") + `</select>`;
     const text = (name, value, hint, cls = "") =>
-      `<input class="cv ${cls}" data-cond="${i}.${name}" spellcheck="false"
+      `<input class="cv ${cls}" data-cond="${path}:${name}" spellcheck="false"
               value="${esc(value == null ? "" : value)}" placeholder="${esc(hint)}">`;
 
     let body;
@@ -802,41 +834,86 @@ class HomeEventsPanel extends HTMLElement {
         `<span class="lbl">after</span>` + text("after", c.after, "07:00:00", "num") +
         `<span class="lbl">before</span>` + text("before", c.before, "23:00:00", "num") +
         text("weekday", [].concat(c.weekday || []).join(", "), "any day", "narrow");
-    } else {
-      body = `<span class="pill">${esc((c.conditions || []).length)} nested — ` +
-        `kept as written, edit on the YAML tab</span>`;
     }
 
     const kinds = [["state", "State"], ["numeric_state", "Numeric state"],
-                   ["time", "Time"]];
+                   ["time", "Time"], ["and", "All of"], ["or", "Any of"],
+                   ["not", "None of"]];
     if (!kinds.some(([k]) => k === kind)) kinds.push([kind, humanise(kind)]);
+
+    const remove = `<button class="x row-x" data-act="delcond" ` +
+      `data-path="${path}" title="Remove this condition">×</button>`;
+
+    /* A group is a row that holds rows. The word on it says how what is inside
+     * adds up, and what is inside is drawn by the same code as everything
+     * else, one level in. */
+    if (GROUP_KINDS.indexOf(kind) !== -1) {
+      return `<div class="group">
+          <div class="cond ghead">${pick("condition", kind, kinds)}
+            <span class="lbl">${kind === "not"
+              ? "of these may be true" : "of these"}</span>
+            <span class="grow"></span>${remove}</div>
+          <div class="subconds">${this._conditionsHtml(c.conditions, path)}</div>
+        </div>`;
+    }
 
     return `<div class="cond">` +
       pick("condition", kind, kinds) + body +
       (kind === "state" || kind === "numeric_state"
         ? `<span class="lbl">for</span>` + text("for", durationText(c.for), "0:05:00", "num")
         : "") +
-      `<span class="grow"></span>` +
-      `<button class="x row-x" data-act="delcond" data-index="${i}" ` +
-      `title="Remove this condition">×</button></div>`;
+      `<span class="grow"></span>${remove}</div>`;
+  }
+
+  /* Where a path points, and the list it lives in.
+   *
+   * "0.2" is the third condition inside the first one. An empty path is the
+   * event's own list, which is the only one that is not inside anything. */
+  _condAt(path) {
+    const parts = String(path === undefined ? "" : path).split(".").filter(Boolean);
+    let list = this._draft.conditions || [];
+    let cond = null;
+    for (const part of parts) {
+      cond = list[Number(part)];
+      if (!cond) return null;
+      list = cond.conditions || [];
+    }
+    return cond;
+  }
+
+  _condListAt(path) {
+    if (!path) return this._draft.conditions || (this._draft.conditions = []);
+    const cond = this._condAt(path);
+    if (!cond) return null;
+    return cond.conditions || (cond.conditions = []);
   }
 
   /* One control, one key. Everything a row can say is said here, so what the
    * form can express and what the schema holds stay the same list. */
-  _setCond(index, field, value) {
-    const list = this._draft.conditions || (this._draft.conditions = []);
-    const c = list[index];
+  _setCond(path, field, value) {
+    const c = this._condAt(path);
     if (!c) return;
     const drop = (...keys) => keys.forEach((k) => delete c[k]);
 
     if (field === "condition") {
       /* Changing the kind keeps nothing but the timing: an `above` on a state
-       * condition is not a value with a new home, it is a mistake waiting. */
+       * condition is not a value with a new home, it is a mistake waiting.
+       *
+       * One exception, and it is the obvious one: all of / any of / none of
+       * are the same question asked three ways, so switching between them
+       * keeps what is inside. */
+      const wasGroup = GROUP_KINDS.indexOf(c.condition) !== -1;
+      const isGroup = GROUP_KINDS.indexOf(value) !== -1;
       const kept = c.for;
+      const children = c.conditions;
       for (const k of Object.keys(c)) delete c[k];
       c.condition = value;
-      if (value === "state") c.state = "on";
-      if (kept !== undefined) c.for = kept;
+      if (isGroup) {
+        c.conditions = wasGroup && Array.isArray(children) ? children : [];
+      } else {
+        if (value === "state") c.state = "on";
+        if (kept !== undefined) c.for = kept;
+      }
     } else if (field === "mode") {
       const current = c.state !== undefined ? c.state : c.state_not;
       drop("state", "state_not");
@@ -906,9 +983,15 @@ class HomeEventsPanel extends HTMLElement {
           `<option value="${esc(d.key)}">${esc(d.label)}</option>`).join("")}
       </select>`;
 
-    /* The one place the card demands an answer, asked at the moment it starts
-     * to matter and not before. */
+    /* How the criteria add up, said whenever there is more than one of them.
+     *
+     * The card only has a choice to make when two different kinds are named:
+     * two areas are always "either area", because an entity is in one room and
+     * asking for both would select nothing. So with one kind the line is a
+     * sentence rather than a control - and it is still a line, because two
+     * rows and nothing saying how they combine is the question this answers. */
     const named = FILTER_DIMS.filter((d) => (filter[d.key] || []).length).length;
+    const count = this._critList(filter).length;
     const match = named > 1
       ? `<div class="hint matchline">
            Entities in
@@ -920,6 +1003,9 @@ class HomeEventsPanel extends HTMLElement {
            </span>
            of these
          </div>`
+      : count > 1
+      ? `<div class="hint matchline">Entities in <b>any</b> of these — two of
+           one kind can only mean either.</div>`
       : "";
 
     const none = rows.length ? "" :
@@ -1336,15 +1422,29 @@ class HomeEventsPanel extends HTMLElement {
         return this._renderPane();
       }
       case "addcond": {
-        const list = this._draft.conditions || (this._draft.conditions = []);
+        const list = this._condListAt(el.dataset.path);
+        if (!list) return;
         list.push({ condition: "state", state: "on" });
         this._setDirty(true);
         return this._renderPane();
       }
       case "delcond": {
-        const list = this._draft.conditions || [];
-        list.splice(Number(el.dataset.index), 1);
-        if (!list.length) delete this._draft.conditions;
+        const path = String(el.dataset.path);
+        const parts = path.split(".");
+        const index = Number(parts.pop());
+        const list = this._condListAt(parts.join("."));
+        if (!list) return;
+        const going = list[index];
+        /* A group takes what is inside it, and nothing on screen says how much
+         * that is once it is folded into one line. */
+        if (going && GROUP_KINDS.indexOf(going.condition) !== -1 &&
+            (going.conditions || []).length &&
+            !ask(`Remove this group and the ${going.conditions.length} ` +
+                 "conditions inside it?")) {
+          return;
+        }
+        list.splice(index, 1);
+        if (!list.length && !parts.length) delete this._draft.conditions;
         this._setDirty(true);
         return this._renderPane();
       }
@@ -1370,9 +1470,21 @@ class HomeEventsPanel extends HTMLElement {
       return this._renderPane();
     }
     if (el && el.dataset && el.dataset.cond) {
-      const [index, field] = el.dataset.cond.split(".");
+      const [path, field] = el.dataset.cond.split(":");
       const value = el.type === "checkbox" ? el.checked : el.value;
-      this._setCond(Number(index), field, value);
+      /* Turning a group into something else empties it, and an emptied group
+       * cannot be got back by choosing the old word again. */
+      if (field === "condition") {
+        const current = this._condAt(path);
+        const wasGroup = current && GROUP_KINDS.indexOf(current.condition) !== -1;
+        const inside = wasGroup ? (current.conditions || []).length : 0;
+        if (inside && GROUP_KINDS.indexOf(value) === -1 &&
+            !ask(`Make this a ${humanise(value).toLowerCase()} condition? ` +
+                 `The ${inside} conditions inside it will be removed.`)) {
+          return this._renderPane();
+        }
+      }
+      this._setCond(path, field, value);
       /* The kind of condition decides which fields exist; everything else is
        * a value in a field that is already there and must not take the focus
        * away mid-word. */
@@ -1411,7 +1523,20 @@ class HomeEventsPanel extends HTMLElement {
     if (path === "category-new") {
       /* Named, or thought better of: either way the field has had its turn. */
       this._newcat = false;
-      if (value.trim()) d.category = value.trim().toLowerCase().replace(/\s+/g, "_");
+      const label = String(value).trim();
+      if (label) {
+        /* Two things, not one. The id is what an event stores and what the
+         * card groups by, so it is plain and lowercase; the label is what was
+         * typed, capitals and all, and it is kept beside it. Deriving the
+         * label back from the id was where "TV alerts" became "Tv Alerts".
+         *
+         * It is only written when the event is, so a section thought better
+         * of leaves nothing behind. */
+        this._newCategory = null;
+        const id = label.toLowerCase().replace(/\s+/g, "_");
+        d.category = id;
+        if (this._catLabel(id) !== label) this._newCategory = { id, label };
+      }
       structural = true;
     } else if (path === "severity") {
       if (value) d.severity = value; else delete d.severity;
@@ -1474,6 +1599,27 @@ class HomeEventsPanel extends HTMLElement {
     return draft;
   }
 
+  /* Put a newly named section in the preset, keeping the spelling.
+   *
+   * The preset is fetched again rather than taken from the cache: this writes
+   * the whole of it back, and writing back a copy that was read minutes ago
+   * would undo anything saved in between. */
+  async _writeCategory() {
+    const pending = this._newCategory;
+    if (!pending) return;
+    const res = await this._ws({ type: "home_events/get" });
+    const preset = clone((res.presets || {})[this._presetId]);
+    if (!preset) return;
+    const cats = preset.categories || (preset.categories = []);
+    if (!cats.some((c) => c.id === pending.id)) {
+      cats.push({ id: pending.id, label: pending.label });
+      await this._ws({
+        type: "home_events/save", preset: this._presetId, data: preset,
+      });
+    }
+    this._newCategory = null;
+  }
+
   async _save() {
     /* Whatever is still sitting in an add-field counts: it is on the screen,
      * so it is part of what was meant. No redraw - the draft is what the save
@@ -1500,6 +1646,10 @@ class HomeEventsPanel extends HTMLElement {
         type: "home_events/save_event", preset: this._presetId, name, yaml: text,
       };
       if (this._renamedFrom && this._renamedFrom !== name) msg.rename_from = this._renamedFrom;
+      /* A section named while writing this event exists once the event does,
+       * and not before. It goes first: an event landing in a section the
+       * preset has never heard of would read by its id until the next write. */
+      await this._writeCategory();
       await this._ws(msg);
       this._selected = name;
       this._renamedFrom = name;
@@ -1797,7 +1947,7 @@ textarea.yaml {
 .chipbtn.on { color: var(--primary-text-color); border-color: currentColor; }
 
 .pair { display: grid; gap: 6px; }
-.pair label { display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 8px; align-items: center; }
+.pair label { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 8px; align-items: center; }
 .pair span { font-size: 11px; color: var(--secondary-text-color); }
 .check { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; }
 
@@ -1805,6 +1955,19 @@ textarea.yaml {
   border: 1px solid var(--divider-color, rgba(127,127,127,.25));
   border-radius: 9px; padding: 7px 10px; margin-bottom: 7px; }
 .cond .grow { flex: 1; }
+
+/* A group of conditions: the word that says how they add up, and the rail
+   under it holding what it applies to. The rail is what makes the nesting
+   readable at a glance - which is the whole reason the group is drawn at all
+   rather than left as YAML. */
+.group { margin-bottom: 7px; }
+.group > .ghead { margin-bottom: 0; border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0; }
+.group > .subconds {
+  margin: 0 0 0 13px; padding: 8px 0 2px 13px;
+  border-left: 2px solid var(--divider-color, rgba(127,127,127,.25));
+}
+.group > .subconds > .hint { padding-bottom: 6px; }
 .cond select, .cond .cv {
   font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 7px;
   background: var(--card-background-color, transparent); color: inherit;
@@ -1814,9 +1977,6 @@ textarea.yaml {
 .cond .cv.num { width: 78px; }
 .cond .cv.narrow { width: 110px; }
 .cond .lbl { font-size: 12px; color: var(--secondary-text-color); }
-.pill { border: 1px solid var(--divider-color, rgba(127,127,127,.3)); border-radius: 7px;
-  padding: 3px 9px; font-size: 12.5px; color: var(--secondary-text-color); }
-.pill.val { font-family: var(--ha-font-family-code, monospace); color: var(--primary-text-color); }
 .hint { font-size: 12.5px; color: var(--secondary-text-color); padding-top: 6px; line-height: 1.5; }
 
 .count { padding: 10px 0 0; font-size: 13px; display: block; }
