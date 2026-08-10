@@ -133,6 +133,13 @@
  *                        - id: appliances
  *                          label: Appliances
  *
+ *   preset:          the name of a library kept by the Home Events
+ *                    integration, e.g. `preset: default`. Its events are
+ *                    merged with any written here, and an event written here
+ *                    wins the name. Without the integration, or without this
+ *                    key, the card reads only what is on the dashboard.
+ *                    Categories come from the preset too, unless the card
+ *                    declares its own
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name            default recent
  *   max:             integer, default 14; the rest become a "+n more" line
@@ -363,7 +370,7 @@
  *          here - Home Assistant already knows those in the user's language.
  */
 
-const CARD_BUILD = "2026-08-10b";
+const CARD_BUILD = "2026-08-10c";
 
 /* ------------------------------------------------------------------ config */
 
@@ -554,6 +561,11 @@ const DEFAULTS = {
    * the same kind of thing as the ones above them, and a glance panel that
    * says "4 more" without a way to see them is asking you to go elsewhere. */
   overflow: "scroll",
+  /* The name of a library kept by the Home Events integration. Null means
+   * this card is the only place its events are written, which is the whole
+   * behaviour of the card before the integration existed and stays the
+   * behaviour of a card installed without it. */
+  preset: null,
   /* A card that vanishes leaves a hole in a sections layout, and a hole reads
    * as a broken card rather than as a quiet house. Off by default. */
   hide_when_empty: false,
@@ -1555,6 +1567,42 @@ class HomeEventCard extends HTMLElement {
      * Source *names* are the exception: every one is yours, so an unknown name
      * is a new source rather than a typo. What catches a mistyped one is that
      * a source without an `include` is an error. */
+    checkConditions(cfg.conditions, "the top level");
+
+    /* Filters are compiled once here rather than on every render: this runs
+     * against every state in the house, per event, several times a second. */
+    compileFilters(cfg, "");
+    this._compileEvents(cfg, cfg.events);
+
+    /* Areas that are filing cabinets, slugged once so the render path is a
+     * lookup rather than a scan. */
+    cfg._nonAreas = new Set(asList(cfg.non_areas).map(areaSlug));
+
+    cfg.text = mergeText(DEFAULT_TEXT, given.text, "text");
+    /* `empty_text` predates the text block. Honoured so an existing dashboard
+     * keeps working; `text.empty` wins if somebody has written both. */
+    if (cfg.empty_text != null && !(given.text && given.text.empty != null)) {
+      cfg.text.empty = cfg.empty_text;
+    }
+
+    cfg._inline = given.events || {};
+    /* Whether the dashboard arranged its own sections. If it did, a preset's
+     * categories are not allowed to reorder them underneath it. */
+    this._ownCategories = Array.isArray(given.categories) && given.categories.length > 0;
+
+    this._config = cfg;
+    this._sig = null; // force a redraw on the next hass tick
+    this._idx = null;
+  }
+
+  /* Validate, compile, index. Everything the render path needs to answer
+   * "which events might this entity belong to" without touching the config.
+   *
+   * Separate from setConfig because a preset arrives later than the config
+   * does: the card is built, drawn, and only then hears back from the Event
+   * Manager. Running this again with the merged events is what makes that
+   * second answer as good as the first. */
+  _compileEvents(cfg, rawEvents) {
     /* Copied first, and never touched in place. What arrives here is
      * Lovelace's own configuration object - the one it keeps, shares between
      * renders and hands back to setConfig on the next rebuild. Compiling the
@@ -1563,8 +1611,8 @@ class HomeEventCard extends HTMLElement {
      * card that rendered a moment ago became a configuration error, and no
      * amount of refreshing helped because the first render caused it. */
     const events = {};
-    for (const name of Object.keys(cfg.events)) {
-      const raw = cfg.events[name];
+    for (const name of Object.keys(rawEvents)) {
+      const raw = rawEvents[name];
       if (!isPlainObject(raw)) {
         throw new Error(
           `home-event-card: events.${name} must be a mapping with at least an ` +
@@ -1625,11 +1673,6 @@ class HomeEventCard extends HTMLElement {
     }
     cfg.events = events;
 
-    checkConditions(cfg.conditions, "the top level");
-
-    /* Filters are compiled once here rather than on every render: this runs
-     * against every state in the house, per event, several times a second. */
-    compileFilters(cfg, "");
     for (const name of Object.keys(cfg.events)) {
       compileFilters(cfg.events[name], `events.${name}.`);
     }
@@ -1671,29 +1714,89 @@ class HomeEventCard extends HTMLElement {
         (cfg._eventsByDomain[d] = cfg._eventsByDomain[d] || []).push(name);
       }
     }
-
-    /* Areas that are filing cabinets, slugged once so the render path is a
-     * lookup rather than a scan. */
-    cfg._nonAreas = new Set(asList(cfg.non_areas).map(areaSlug));
-
-    cfg.text = mergeText(DEFAULT_TEXT, given.text, "text");
-    /* `empty_text` predates the text block. Honoured so an existing dashboard
-     * keeps working; `text.empty` wins if somebody has written both. */
-    if (cfg.empty_text != null && !(given.text && given.text.empty != null)) {
-      cfg.text.empty = cfg.empty_text;
-    }
-
-    this._config = cfg;
-    this._sig = null; // force a redraw on the next hass tick
-    this._idx = null;
   }
 
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
+    this._fetchPreset();
     this._loadRegistries();
     if (!this._built) this._build();
     this._render();
+  }
+
+  /* The library, if this card was told to read one.
+
+   * Asked for once, then followed: `home_events/subscribe` pushes on every
+   * save, so an open dashboard changes as the panel is edited rather than at
+   * the next reload. A failure is logged once and left there - a card that
+   * blanks itself because an integration is missing is the worst of the
+   * available failures, so what it already had goes on being drawn. */
+  _fetchPreset() {
+    if (this._presetAsked || !this._config.preset || !this._hass) return;
+    this._presetAsked = true;
+    const conn = this._hass.connection;
+    this._readPreset();
+    conn
+      .subscribeMessage(() => this._readPreset(), { type: "home_events/subscribe" })
+      .then((off) => {
+        this._presetOff = off;
+      })
+      .catch(() => {});
+  }
+
+  _readPreset() {
+    const name = this._config.preset;
+    this._hass.connection
+      .sendMessagePromise({ type: "home_events/preset", preset: name })
+      .then((res) => this._applyPreset(res))
+      .catch((err) => {
+        console.warn(
+          `home-event-card: could not read preset "${name}" - ` +
+            ((err && err.message) || err) +
+            ". Showing the events written on the card.",
+        );
+      });
+  }
+
+  /* The preset's events, under anything the dashboard says itself.
+   *
+   * Inline wins the name on purpose: the library is the shared answer and the
+   * card is the local override, which is the direction people expect and the
+   * only one that lets a single dashboard differ without forking the library.
+   *
+   * A preset that will not compile is logged and dropped rather than thrown:
+   * it arrived from somewhere else, possibly while somebody was mid-edit, and
+   * the card was rendering perfectly well a moment ago. */
+  _applyPreset(data) {
+    const cfg = this._config;
+    const events = { ...(data.events || {}), ...(cfg._inline || {}) };
+    /* Compiled onto a copy and only then committed. Compiling writes five keys
+     * that have to agree with each other, and a throw halfway through left the
+     * index describing events the card no longer had. */
+    const next = { ...cfg };
+    try {
+      this._compileEvents(next, events);
+    } catch (err) {
+      console.warn(
+        `home-event-card: preset "${cfg.preset}" was not usable - ` +
+          ((err && err.message) || err),
+      );
+      return;
+    }
+    for (const k of ["events", "_events", "_eventsByDomain", "_eventsAll",
+                     "_wantRegistries"]) {
+      cfg[k] = next[k];
+    }
+    if (!this._ownCategories && Array.isArray(data.categories)) {
+      cfg.categories = data.categories;
+    }
+    this._sig = null;
+    this._idx = null;
+    if (this._hass) {
+      this._loadRegistries();
+      this._render();
+    }
   }
 
   /* id -> entry for the two registries hass does not hand out as collections,
@@ -1841,6 +1944,11 @@ class HomeEventCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._presetOff) {
+      this._presetOff();
+      this._presetOff = null;
+      this._presetAsked = false;
+    }
     if (this._timer) window.clearInterval(this._timer);
     this._timer = null;
     document.removeEventListener("visibilitychange", this._onVisibility);
