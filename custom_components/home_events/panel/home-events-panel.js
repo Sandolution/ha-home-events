@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11d";
+const PANEL_BUILD = "2026-08-11e";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -235,6 +235,7 @@ class HomeEventsPanel extends HTMLElement {
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
     this._match = null;
+    this._recountTimer = null;
     /* Shown unless it is put away: the whole point of counting is being able
      * to see what was counted. */
     this._showMatches = true;
@@ -245,6 +246,23 @@ class HomeEventsPanel extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (first) this._start();
+    else this._laterRecount();
+  }
+
+  /* The house moves while the editor is open, and what the counts are about is
+   * the house: a light going on should show up in "3 of 26 are in this state"
+   * without anything being clicked. Home Assistant pushes a new hass on every
+   * state change, which in this house is several a second, so this recomputes
+   * on a trailing second - live enough to watch, cheap enough to ignore. */
+  _laterRecount() {
+    if (this._recountTimer || this._mode !== "visual") return;
+    if (!this._el || !this._el.pane || !this._el.pane.querySelector("[data-count]")) return;
+    this._recountTimer = setTimeout(() => {
+      this._recountTimer = null;
+      if (this._mode === "visual" && this._el.pane.querySelector("[data-count]")) {
+        this._recount();
+      }
+    }, 1000);
   }
 
   get hass() {
@@ -261,6 +279,10 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._recountTimer) {
+      clearTimeout(this._recountTimer);
+      this._recountTimer = null;
+    }
     if (this._unsub) {
       this._unsub.then((off) => off()).catch(() => {});
       this._unsub = null;
@@ -646,6 +668,7 @@ class HomeEventsPanel extends HTMLElement {
       return tabs + `<div class="fs">
          <div class="legend">When <span class="q">— and in which state?</span></div>
          ${this._conditionsHtml(d.conditions)}
+         <div class="count" data-count></div>
        </div>`;
     }
     if (sub === "what") {
@@ -1291,7 +1314,9 @@ class HomeEventsPanel extends HTMLElement {
       (k) => k !== "match" && (include[k] || []).length
     );
     if (!this._engine || !anything) {
-      box.innerHTML = "";
+      box.innerHTML = anything || this._sub !== "when" ? "" :
+        `<span class="dim">Nothing to check yet — say what this event covers
+          on the What tab.</span>`;
       return;
     }
     let ids;
@@ -1308,12 +1333,55 @@ class HomeEventsPanel extends HTMLElement {
       return;
     }
     this._match = ids;
+    box.innerHTML = this._sub === "when"
+      ? this._passingHtml(ids)
+      : this._matchCountHtml(ids);
+  }
+
+  _matchCountHtml(ids) {
     const n = ids.length;
-    box.innerHTML =
-      `<span class="ok">Matches ${n} ${n === 1 ? "entity" : "entities"}</span>` +
+    return `<span class="ok">Matches ${n} ${n === 1 ? "entity" : "entities"}</span>` +
       (n ? `<button class="link" data-act="showmatches">${
         this._showMatches ? "hide" : "show them"}</button>` : "") +
       (this._showMatches ? this._matchesHtml(ids) : "");
+  }
+
+  /* The same view, asked of the conditions: of the entities this event covers,
+   * which are in the state it is about - right now, as the card would decide
+   * it. The card's own evaluator answers, so writing a condition here and
+   * watching a room appear is the same thing the dashboard will do with it.
+   *
+   * It is a snapshot with a clock in it: `for: 5 minutes` is false until it is
+   * true, and this recomputes as the house moves. */
+  _passingHtml(ids) {
+    const conditions = (this._draft || {}).conditions;
+    const total = ids.length;
+    if (!conditions || !conditions.length) {
+      return `<span class="ok">No conditions, so all ${total} of them show` +
+        ` whatever state they are in</span>`;
+    }
+    if (!this._engine.passingEntities) {
+      /* An older card is still the card the dashboard draws with, and it is
+       * the one this borrows from. Saying so beats a blank space. */
+      return `<span class="dim">The card on this dashboard is too old to
+        answer this. Reload it, or check the resource version.</span>`;
+    }
+    let passing;
+    try {
+      passing = this._engine.passingEntities(this._hass, ids, clone(conditions));
+    } catch (err) {
+      return `<span class="dim">${esc(this._reason(err))}</span>`;
+    }
+    const n = passing.length;
+    const head = n
+      ? `<span class="ok">${n} of ${total} ${n === 1 ? "is" : "are"} in this
+          state right now</span>`
+      : `<span class="dim">None of the ${total} are in this state right now
+          — nothing would show.</span>`;
+    return head +
+      (n ? `<button class="link" data-act="showmatches">${
+        this._showMatches ? "hide" : "show them"}</button>` : "") +
+      (n && this._showMatches ? this._matchesHtml(passing) : "");
   }
 
   _matchesHtml(ids) {
@@ -1489,6 +1557,7 @@ class HomeEventsPanel extends HTMLElement {
        * a value in a field that is already there and must not take the focus
        * away mid-word. */
       if (field === "condition" || field === "mode") this._renderPane();
+      else this._recount();
       return;
     }
     if (!el || !el.dataset || !el.dataset.set) {

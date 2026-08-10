@@ -370,7 +370,7 @@
  *          here - Home Assistant already knows those in the user's language.
  */
 
-const CARD_BUILD = "2026-08-10c";
+const CARD_BUILD = "2026-08-10d";
 
 /* ------------------------------------------------------------------ config */
 
@@ -3268,6 +3268,27 @@ export function matchEntities(hass, spec) {
     if (!probe._excluded(id, cfg, hass.states[id])) out.push(id);
   }
   return out;
+}
+
+/* And the other half of the same question: of the entities a filter selects,
+ * which ones are in the state the event is about, right now.
+ *
+ * Same reasoning as above, and the same probe: the card's own `_conditionsMet`
+ * answers, so what the panel shows while conditions are being written is what
+ * the card will do with them. Conditions read the clock and the state machine,
+ * so this is a snapshot - ask again and the answer may differ, which is the
+ * point of showing it.
+ */
+export function passingEntities(hass, ids, conditions) {
+  if (!conditions || !conditions.length) return (ids || []).slice();
+  const probe = document.createElement("home-event-card");
+  probe.setConfig({
+    type: "custom:home-event-card",
+    events: { probe: { include: { entity_globs: ["*"] }, conditions } },
+  });
+  probe._hass = hass;
+  const compiled = probe._config.events.probe.conditions;
+  return (ids || []).filter((id) => probe._conditionsMet(compiled, id));
 }
 
 export { HomeEventCard, CARD_BUILD };
