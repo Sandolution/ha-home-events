@@ -35,6 +35,8 @@ PLURAL_KEYS = ["title", "status", "icon"]
 # home-event-card.js: SEVERITIES, TIME_MODES, GROUP_MODES
 SEVERITIES = ["alert", "attention", "active", "info"]
 TIME_MODES = ["since", "until", "ago", "remaining"]
+# home-event-card.js: SORT_MODES — how a section orders the rows inside it.
+SORT_MODES = ["recent", "duration", "name"]
 GROUP_MODES = [False, True, "area", "all"]
 MATCH_MODES = ["any", "all"]
 # home-event-card.js: CONDITION_KEYS
@@ -235,10 +237,13 @@ def validate_preset(data: Any) -> dict:
         if not _is_map(cat) or not cat.get("id"):
             _fail(f'Every entry under "categories" needs an "id", and '
                   f"categories[{i}] has none.")
-        unknown = [k for k in cat if k not in ("id", "label")]
+        unknown = [k for k in cat if k not in ("id", "label", "sort")]
         if unknown:
             _fail(f"Unknown key(s) in categories[{i}]: " + ", ".join(unknown)
-                  + '. A category holds "id" and "label".')
+                  + '. A category holds "id", "label" and "sort".')
+        if cat.get("sort") is not None and cat["sort"] not in SORT_MODES:
+            _fail(f"Sort {cat['sort']!r} on section \"{cat['id']}\" is not one "
+                  "of: " + ", ".join(SORT_MODES) + ".")
 
     return {
         "name": data.get("name") or "",

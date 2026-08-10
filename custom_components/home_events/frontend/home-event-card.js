@@ -126,12 +126,15 @@
 *   categories:      the sections, in order, and their headings. An id an
  *                    event names that is not in here is created and appended,
  *                    so this arranges sections rather than registering them.
+ *                    A section may also say how its own rows are ordered;
+ *                    without it they follow the card's `sort`.
  *
  *                      categories:
  *                        - id: alerts
  *                          label: Needs attention
  *                        - id: appliances
  *                          label: Appliances
+ *                          sort: recent
  *
  *   preset:          the name of a library kept by the Home Events
  *                    integration, e.g. `preset: default`. Its events are
@@ -1076,6 +1079,12 @@ function matchesArea(areaName, list) {
  * documentation table to describe.
  *
  * If `include` is given at all and nothing in it matched, the entity is out. */
+/* How the rows inside a section are ordered. Severity always comes first -
+ * an alert is the row worth seeing, whatever the section says - and a
+ * countdown always runs soonest-first, because "four minutes left" and "the
+ * next calendar entry" are the same kind of fact. This decides the rest. */
+const SORT_MODES = ["recent", "duration", "name"];
+
 const FILTER_KEYS = [
   "domains", "floors", "areas", "labels", "devices", "entities", "entity_globs",
 ];
@@ -1527,9 +1536,10 @@ class HomeEventCard extends HTMLElement {
           `Valid values are ${valid.join(", ")}.`
       );
     }
-    if (["recent", "duration", "name"].indexOf(cfg.sort) === -1) {
+    if (SORT_MODES.indexOf(cfg.sort) === -1) {
       throw new Error(
-        `home-event-card: unknown sort "${cfg.sort}". Valid values are recent, duration, name.`
+        `home-event-card: unknown sort "${cfg.sort}". Valid values are ` +
+          `${SORT_MODES.join(", ")}.`
       );
     }
     if (!isPlainObject(cfg.events)) cfg.events = {};
@@ -1548,7 +1558,13 @@ class HomeEventCard extends HTMLElement {
             "e.g. `- id: appliances` with `label: Appliances`."
         );
       }
-      checkKeys(["id", "label"], c, `category "${c.id}"`);
+      checkKeys(["id", "label", "sort"], c, `category "${c.id}"`);
+      if (c.sort != null && SORT_MODES.indexOf(c.sort) === -1) {
+        throw new Error(
+          `home-event-card: unknown sort "${c.sort}" on category "${c.id}". ` +
+            `Valid values are ${SORT_MODES.join(", ")}.`
+        );
+      }
       if (catIds.indexOf(c.id) !== -1) {
         throw new Error(`home-event-card: duplicate category id "${c.id}".`);
       }
@@ -2592,8 +2608,8 @@ class HomeEventCard extends HTMLElement {
     });
   }
 
-  _sortEvents(list) {
-    const mode = this._config.sort;
+  _sortEvents(list, sort) {
+    const mode = sort || this._config.sort;
     const now = Date.now();
     return list.sort((a, b) => {
       const s = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
@@ -2705,6 +2721,15 @@ class HomeEventCard extends HTMLElement {
        * still decides where everything else lands. */
       const id = promote && e.severity === "alert" ? promoteTo : e.category;
       push(id, labels[id] || id, e);
+    }
+    /* A section may order its own rows: appliances read best newest-first,
+     * lights by how long they have been on. The card-wide `sort` decided which
+     * rows survived `max`; this decides how the survivors read, section by
+     * section. */
+    const sorts = {};
+    for (const c of cats) if (c.sort) sorts[c.id] = c.sort;
+    for (const b of buckets.values()) {
+      if (sorts[b.id]) this._sortEvents(b.events, sorts[b.id]);
     }
     return this._capSections(
       [...buckets.values()].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))

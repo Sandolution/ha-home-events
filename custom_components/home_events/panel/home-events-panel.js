@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11e";
+const PANEL_BUILD = "2026-08-11f";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -62,12 +62,22 @@ const SEVERITIES = [
   { key: "info", label: "Info" },
 ];
 const DEFAULT_SEVERITY = "info";
+/* home-event-card.js: SORT_MODES, and the one that is not a mode - a section
+ * that says nothing follows whatever the card was told. */
+const SORTS = [
+  { key: "", label: "As the card says" },
+  { key: "recent", label: "Newest first" },
+  { key: "duration", label: "Longest first" },
+  { key: "name", label: "By name" },
+];
+
 const GROUPS = [
   { key: null, label: "No" },
   { key: "area", label: "Per room" },
   { key: "all", label: "One row" },
 ];
 const TIME_MODES = ["since", "until", "ago", "remaining"];
+const DEFAULT_TIME_MODE = "since";
 /* The conditions that hold other conditions. Core's own three, and the card
  * evaluates them the way core does: and passes when every one inside passes,
  * or when any does, not when none does. */
@@ -396,6 +406,7 @@ class HomeEventsPanel extends HTMLElement {
           <div class="title">Events</div>
           <select class="preset"></select>
           <span class="grow"></span>
+          <button class="ghost" data-act="sections">Sections</button>
           <button class="ghost" data-act="library">Whole library</button>
         </header>
         <main>
@@ -542,6 +553,12 @@ class HomeEventsPanel extends HTMLElement {
    * writes it, so nothing is taken away - only the way in by accident. */
   _formShape(event) {
     if (!event.severity) event.severity = DEFAULT_SEVERITY;
+    /* Same reasoning as severity: the form has four words for this and no
+     * fifth one meaning "whichever the domain picks", so an event that has
+     * never said reads Since - which is what all but one domain does anyway.
+     * The exception is `timer`, which counts down, and an event covering
+     * timers wants Remaining chosen for it. */
+    if (!event.time_mode) event.time_mode = DEFAULT_TIME_MODE;
     return event;
   }
 
@@ -550,7 +567,7 @@ class HomeEventsPanel extends HTMLElement {
     this._selected = null;
     this._renamedFrom = null;
     this._name = "";
-    this._draft = clone(STARTER);
+    this._draft = this._formShape(clone(STARTER));
     this._mode = "visual";
     this._setDirty(true);
     this._match = null;
@@ -566,6 +583,94 @@ class HomeEventsPanel extends HTMLElement {
     this._renderList();
     this._renderPane();
     this._el.name.focus();
+  }
+
+  /* The sections, which are the other half of how a card reads: which order
+   * they come in, what each is called, and how the rows inside one are
+   * ordered. All three are properties of the library rather than of any one
+   * event, so they live behind their own button rather than on the form. */
+  async _openSections() {
+    if (!(await this._confirmDiscard())) return;
+    this._mode = "sections";
+    this._selected = null;
+    this._renamedFrom = null;
+    this._draft = null;
+    /* Every section that exists: the ones the preset arranges, then the ones
+     * only an event has heard of, which is exactly the order a card puts them
+     * in. Listing them is what makes them arrangeable. */
+    const declared = (this._preset().categories || []).map((c) => ({
+      id: c.id, label: c.label || "", sort: c.sort || "",
+    }));
+    for (const id of this._categories()) {
+      if (!declared.some((c) => c.id === id)) declared.push({ id, label: "", sort: "" });
+    }
+    this._sections = declared;
+    this._el.name.value = this._preset().name || this._presetId;
+    this._el.name.disabled = true;
+    this._el.del.style.display = "none";
+    this._el.tabs.style.display = "none";
+    this._setDirty(false);
+    this._renderPane();
+    this._say("The order sections read in, and how each one sorts its rows.");
+    this._renderList();
+  }
+
+  _sectionsHtml() {
+    const rows = this._sections.map((c, i) => {
+      const used = Object.values(this._events())
+        .filter((e) => (e.category || "") === c.id).length;
+      return `<div class="crit secrow">
+          <input class="secname" data-sec="${i}.label" spellcheck="false"
+                 placeholder="Name this section"
+                 value="${esc(c.label || humanise(c.id))}">
+          <select data-sec="${i}.sort">
+            ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
+              `${(c.sort || "") === o.key ? " selected" : ""}>${esc(o.label)}</option>`).join("")}
+          </select>
+          <span class="dim count-of">${used} ${used === 1 ? "event" : "events"}</span>
+          <button class="mv" data-act="secup" data-index="${i}" title="Move up"
+                  ${i === 0 ? "disabled" : ""}>↑</button>
+          <button class="mv" data-act="secdown" data-index="${i}" title="Move down"
+                  ${i === this._sections.length - 1 ? "disabled" : ""}>↓</button>
+          <button class="x row-x" data-act="secdel" data-index="${i}"
+                  title="Stop arranging this one">×</button>
+        </div>`;
+    }).join("");
+    return `<div class="fs">
+        <div class="legend">Sections
+          <span class="q">— the order they read in, and how each sorts its rows</span></div>
+        <div class="crits wide">${rows}
+          <button class="ghost sm" data-act="secadd">+ Add section</button>
+        </div>
+        <div class="hint">A section an event names but this list does not is
+          drawn after these, sorted the way the card is. Taking one off this
+          list does not touch its events - it only stops arranging it.</div>
+      </div>`;
+  }
+
+  async _saveSections() {
+    const res = await this._ws({ type: "home_events/get" });
+    const preset = clone((res.presets || {})[this._presetId]);
+    if (!preset) return;
+    /* A row that was added and never named has nothing to arrange, and two
+       rows that ended up with one id would be one section twice. */
+    const seen = new Set();
+    preset.categories = this._sections.filter((c) => {
+      if (!c.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    }).map((c) => {
+      const out = { id: c.id };
+      if (c.label && c.label !== humanise(c.id)) out.label = c.label;
+      if (c.sort) out.sort = c.sort;
+      return out;
+    });
+    await this._ws({
+      type: "home_events/save", preset: this._presetId, data: preset,
+    });
+    this._setDirty(false);
+    await this._reload();
+    this._say("Saved");
   }
 
   async _openLibrary() {
@@ -638,6 +743,10 @@ class HomeEventsPanel extends HTMLElement {
       t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
     });
 
+    if (this._mode === "sections") {
+      this._el.pane.innerHTML = this._sectionsHtml();
+      return;
+    }
     if (this._mode !== "visual") {
       this._el.pane.innerHTML =
         `<textarea class="yaml" spellcheck="false" wrap="off" ` +
@@ -729,9 +838,9 @@ class HomeEventsPanel extends HTMLElement {
            <label class="check"><input type="checkbox" data-set="show_time"
              ${d.show_time === false ? "" : "checked"}> Show</label>
            <select data-set="time_mode"${d.show_time === false ? " disabled" : ""}>
-             <option value="">Default (since)</option>
              ${TIME_MODES.map((m) => `<option value="${m}"` +
-               `${d.time_mode === m ? " selected" : ""}>${humanise(m)}</option>`).join("")}
+               `${(d.time_mode || DEFAULT_TIME_MODE) === m ? " selected" : ""}>` +
+               `${humanise(m)}</option>`).join("")}
            </select>
          </div></div>
        </div>`
@@ -1443,6 +1552,7 @@ class HomeEventsPanel extends HTMLElement {
       case "delete": return this._delete();
       case "new": return this._newEvent();
       case "library": return this._openLibrary();
+      case "sections": return this._openSections();
       case "tab-visual": return this._toVisual();
       case "tab-yaml": return this._openYaml();
       case "critup":
@@ -1516,6 +1626,24 @@ class HomeEventsPanel extends HTMLElement {
         this._setDirty(true);
         return this._renderPane();
       }
+      case "secup":
+      case "secdown": {
+        const at = Number(el.dataset.index);
+        const to = at + (el.dataset.act === "secup" ? -1 : 1);
+        if (to < 0 || to >= this._sections.length) return;
+        this._sections.splice(to, 0, this._sections.splice(at, 1)[0]);
+        this._setDirty(true);
+        return this._renderPane();
+      }
+      case "secdel":
+        this._sections.splice(Number(el.dataset.index), 1);
+        this._setDirty(true);
+        return this._renderPane();
+      case "secadd":
+        this._sections.push({ id: "", label: "", sort: "" });
+        this._setDirty(true);
+        this._renderPane();
+        return this._el.pane.querySelector(".secrow:last-of-type .secname").focus();
       case "showmatches":
         this._showMatches = !this._showMatches;
         return this._recount();
@@ -1536,6 +1664,22 @@ class HomeEventsPanel extends HTMLElement {
       if (!dim) return;
       this._editing = { type: "crit", side: el.dataset.side, dim, index: null };
       return this._renderPane();
+    }
+    if (el && el.dataset && el.dataset.sec) {
+      const [index, field] = el.dataset.sec.split(".");
+      const row = this._sections[Number(index)];
+      if (!row) return;
+      row[field] = el.value;
+      /* A section added here has no id until it has a name, and the name is
+       * where the id comes from - the same rule as naming one from the form,
+       * so the two cannot disagree about what "TV alerts" is called. */
+      if (field === "label" && !row.id && e.type === "change" && el.value.trim()) {
+        row.id = el.value.trim().toLowerCase().replace(/\s+/g, "_");
+        this._setDirty(true);
+        return this._renderPane();
+      }
+      this._setDirty(true);
+      return;
     }
     if (el && el.dataset && el.dataset.cond) {
       const [path, field] = el.dataset.cond.split(":");
@@ -1621,7 +1765,10 @@ class HomeEventsPanel extends HTMLElement {
     } else if (path === "time_mode") {
       if (value) d.time_mode = value; else delete d.time_mode;
     } else if (path === "category") {
-      d.category = value;
+      /* Generic is the absence of a section, not a section called "". An
+       * empty string here reached the store and read as an event filed under
+       * nothing, which is what it is - so it is written that way. */
+      if (value) d.category = value; else delete d.category;
       structural = true;
     } else if (path.indexOf(".") !== -1) {
       const [head, tail] = path.split(".");
@@ -1696,6 +1843,7 @@ class HomeEventsPanel extends HTMLElement {
      * click that started this. */
     for (const send of this._pending) send(false);
     try {
+      if (this._mode === "sections") return await this._saveSections();
       if (this._mode === "library") {
         const text = this._el.pane.querySelector(".yaml").value;
         await this._ws({ type: "home_events/import", preset: this._presetId, yaml: text });
@@ -1997,6 +2145,15 @@ textarea.yaml {
 }
 .mv:hover:not([disabled]) { background: rgba(127,127,127,.16); color: var(--primary-text-color); }
 .mv[disabled] { opacity: .25; cursor: default; }
+
+/* One section: what it is called, how it sorts, how many events are in it,
+   and where it sits. */
+.crits.wide { align-items: stretch; }
+.crits.wide > .ghost { align-self: flex-start; }
+.secrow { gap: 8px; }
+.secrow .secname { flex: 1 1 200px; min-width: 120px; }
+.secrow select { flex: 0 0 auto; }
+.secrow .count-of { font-size: 12px; white-space: nowrap; }
 .primary.idle {
   background: transparent; color: var(--secondary-text-color);
   border-color: var(--divider-color, rgba(127,127,127,.3)); cursor: default;
