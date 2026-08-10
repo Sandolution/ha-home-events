@@ -122,29 +122,19 @@
  * ---------------------------------------------------------------------------
  * Config
  *
+ * Two places, and the line between them is the point: the library says what
+ * the house is watching, and the card says how that library reads on this
+ * dashboard. Everything about events - what they cover, when they apply, how
+ * their rows word themselves - lives in the Home Events integration and is
+ * edited in its panel. What is left here is a view.
+ *
  *   type: custom:home-event-card       (required, and sufficient)
-*   categories:      the sections, in order, and their headings. An id an
- *                    event names that is not in here is created and appended,
- *                    so this arranges sections rather than registering them.
- *                    A section may also say how its own rows are ordered;
- *                    without it they follow the card's `sort`.
  *
- *                      categories:
- *                        - id: alerts
- *                          label: Needs attention
- *                        - id: appliances
- *                          label: Appliances
- *                          sort: recent
- *
- *   preset:          the name of a library kept by the Home Events
- *                    integration, e.g. `preset: default`. Its events are
- *                    merged with any written here, and an event written here
- *                    wins the name. Without the integration, or without this
- *                    key, the card reads only what is on the dashboard.
- *                    Categories and `sort` come from the preset too, unless
- *                    the card declares its own
+ *   preset:          which library to draw. Default "default". Its events,
+ *                    its sections and its `sort` all come from there
  *   group_by:        category | area | severity | none   default category
- *   sort:            recent | duration | name            default recent
+ *   sort:            recent | duration | name. Overrides whatever the library
+ *                    says; leave it out to follow the library
  *   max:             integer, default 14; the rest become a "+n more" line
  *   max_per_section: rows a section shows before overflowing, 0 = uncapped
  *   overflow:        scroll | hide — what happens to the rest
@@ -157,76 +147,68 @@
  *   collapsible:     bool, default false — section headings fold their rows.
  *                    What is folded is a reading position, not a preference,
  *                    so it is not remembered across a reload
- *   empty_text:      superseded by text.empty; still accepted
- *   promote_alerts:  bool, default true — anything red is filed under
- *                    "Needs attention" rather than its own category
+ *   promote_alerts:  a section id, or false, default "alerts" — anything red
+ *                    is filed there rather than under its own section
  *   split_sections:  bool, default true — a card per section. Turn off for
  *                    `group_by: area`, which otherwise makes a card per room
- *   include / exclude:  filters. Recorder's two keys plus the four a service
- *                    call targets, which between them is every way core lets
- *                    you name a set of things. Accepted at the top level and
- *                    on any source; both must pass.
+ *   text:            every string the card writes itself, for translating or
+ *                    rewording. Any subset; the rest keep their defaults:
  *
- *                      exclude:
- *                        domains:      [automation, update]
- *                        entity_globs: ["sensor.sun*", "weather.*"]
- *                        entities:     [sensor.date]
- *                        devices:      ["Kitchen | Dishwasher"]
- *                        areas:        [Garden]
- *                        floors:       [Second Floor]
- *                        labels:       [Battery]
+ *                      text:
+ *                        empty:     Nothing going on
+ *                        elsewhere: Elsewhere
+ *                        severities: {alert: …, attention: …, active: …}
+ *                        climate:    {heating: Heating, idle: Idle, …}
+ *                        status:     {running: …, open_pct: "{n}% open"}
+ *                        time:       {minute: "{n}m", remaining: "{n} left"}
+ *                        strip:      {timer: [Timer], climate: [Heating, …]}
  *
- *                    Name more than one dimension and the block must say how
- *                    they combine - there is no honest default:
+ *                    Entity names, area names and media/cover/vacuum states
+ *                    are not in here - Home Assistant already knows those in
+ *                    the user's language.
  *
- *                      include:
- *                        match: all        # every one of them must hold
- *                        domains: [light]
- *                        floors: [first_floor, second_floor]
+ * `events`, `categories`, `include`, `exclude`, `conditions` and `non_areas`
+ * were card options once. They are the library's now, and a card that still
+ * carries one says so rather than ignoring it.
  *
- *                    `match: all` is the intersection - lights upstairs.
- *                    `match: any` is the union, which is what recorder does:
- *                    every light in the house *and* everything upstairs. On
- *                    this install those are 19 entities and 387. A block
- *                    naming one dimension does not need it.
+ * ---------------------------------------------------------------------------
+ * The library
  *
- *                    A bare list is shorthand for `entity_globs`. Globs are
- *                    anchored: `sensor.sun*` does not match
- *                    binary_sensor.sunroom. Everything else is matched on a
- *                    slug of the id and of the display name both, which stop
- *                    being the same string the first time somebody renames
- *                    one. Labels and areas count whether they sit on the
- *                    entity, its device or its area - the same expansion a
- *                    service target does.
+ * A preset in .storage, written by the Home Events integration:
  *
- *                    Precedence is a specificity ladder - entities (7),
- *                    entity_globs (6), devices (5), labels (4), areas (3),
- *                    floors (2), domains (1). Narrower beats broader and
- *                    exclude wins a tie, so `exclude: {domains: [switch]}`
- *                    with `include: {entities: [switch.pond_pump]}` keeps the
- *                    pump and drops the other 139, and an area exclude carves
- *                    a room out of a floor include. If an `include` is given
- *                    and nothing in it matches, the entity is out - which
- *                    means an area- or floor-based include drops everything
- *                    with no area, timers among them.
+ *     name:        what to call it
+ *     sort:        the default order for rows in a section
+ *     non_areas:   registry areas that are filing cabinets rather than places,
+ *                  by id or name. An entity in one is shown without a location
+ *                  rather than claiming to be somewhere called "System"
+ *     categories:  the sections, in order, and their headings. An id an event
+ *                  names that is not in here is created and appended, so this
+ *                  arranges sections rather than registering them. A section
+ *                  may say how its own rows are ordered:
  *
-*   events: the whole of what the card shows. A name of your choosing, an
- *   `include` saying what it covers, and how its rows read. The name is yours -
- *   `lights`, `upstairs`, `dryer_done` - and only `include` is required:
+ *                    categories:
+ *                      - id: alerts
+ *                        label: Needs attention
+ *                      - id: appliances
+ *                        label: Appliances
+ *                        sort: recent
  *
- *       events:
- *         pumps:
- *           category: pumps
- *           include:
- *             entity_globs: ["switch.*_pump"]
+ *     events:      the whole of what the card shows. A name of your choosing,
+ *                  an `include` saying what it covers, and how its rows read:
  *
- *   Every event takes:
+ *                    events:
+ *                      pumps:
+ *                        category: pumps
+ *                        include:
+ *                          entity_globs: ["switch.*_pump"]
+ *
+ * Every event takes:
  *
  *     enabled       false to switch it off without deleting it
  *     category      the section it feeds; created if undeclared
  *     group         area collapses its rows into one per room, with a count;
  *                   all collapses them into a single row. `true` means area
- *     include       required - see the filter block above
+ *     include       required - see the filters below
  *     exclude
  *     conditions    when it applies - see below. Nothing is implicit: without
  *                   any, every entity the include matches shows, in any state
@@ -239,7 +221,54 @@
  *     status        template for the state word, top right
  *     icon          overrides the entity's own
  *
- *   `title`, `detail` and `status` are templates, not fixed strings:
+ * ---------------------------------------------------------------------------
+ * Filters
+ *
+ * Recorder's two keys plus the four a service call targets, which between
+ * them is every way core lets you name a set of things:
+ *
+ *     exclude:
+ *       domains:      [automation, update]
+ *       entity_globs: ["sensor.sun*", "weather.*"]
+ *       entities:     [sensor.date]
+ *       devices:      ["Kitchen | Dishwasher"]
+ *       areas:        [Garden]
+ *       floors:       [Second Floor]
+ *       labels:       [Battery]
+ *
+ * Name more than one dimension and the block must say how they combine -
+ * there is no honest default:
+ *
+ *     include:
+ *       match: all        # every one of them must hold
+ *       domains: [light]
+ *       floors: [first_floor, second_floor]
+ *
+ * `match: all` is the intersection - lights upstairs. `match: any` is the
+ * union, which is what recorder does: every light in the house *and*
+ * everything upstairs. On this install those are 19 entities and 387. A block
+ * naming one dimension does not need it.
+ *
+ * A bare list is shorthand for `entity_globs`. Globs are anchored:
+ * `sensor.sun*` does not match binary_sensor.sunroom. Everything else is
+ * matched on a slug of the id and of the display name both, which stop being
+ * the same string the first time somebody renames one. Labels and areas count
+ * whether they sit on the entity, its device or its area - the same expansion
+ * a service target does.
+ *
+ * Precedence is a specificity ladder - entities (7), entity_globs (6),
+ * devices (5), labels (4), areas (3), floors (2), domains (1). Narrower beats
+ * broader and exclude wins a tie, so `exclude: {domains: [switch]}` with
+ * `include: {entities: [switch.pond_pump]}` keeps the pump and drops the other
+ * 139, and an area exclude carves a room out of a floor include. If an
+ * `include` is given and nothing in it matches, the entity is out - which
+ * means an area- or floor-based include drops everything with no area, timers
+ * among them.
+ *
+ * ---------------------------------------------------------------------------
+ * Wording
+ *
+ * `title`, `detail` and `status` are templates, not fixed strings:
  *
  *     {state}       humanised; {state.raw} is not
  *     {attr.foo}    an attribute, and {attr.foo@other.entity} another entity's
@@ -247,49 +276,51 @@
  *     {area}        where it is
  *     {n}           how many landed in this row - grouped events only
  *
- *   A grouped event counts, so it needs two wordings. `title`, `status` and
- *   `icon` may take a `one`/`many` mapping, and only when the event groups -
- *   ungrouped there is nothing to count and a mapping is a mistake worth
- *   naming:
+ * Any of them takes a replace, for names written for the state machine rather
+ * than for a person - "Dryer | State" and its kind:
  *
- *       events:
- *         lights:
- *           group: area
- *           include: {domains: [light]}
- *           conditions: [{condition: state, state: "on"}]
- *           status:
- *             one: 1 light on
- *             many: "{n} lights on"
- *           icon:
- *             one: mdi:lightbulb
- *             many: mdi:lightbulb-group
+ *     title: "{name|s/ · State$//}"
+ *     status: "{attr.program|s/^p_//}"
  *
- *   An unknown key throws and names the nearest valid one. An event *name* is
- *   never unknown, since every one is yours; what catches a typo is that an
- *   event without an `include` is an error.
+ * One replace per placeholder, JavaScript's own regular expressions and its
+ * own flags, $1 in the replacement. Deliberately no branching: a row that
+ * needs an `if` is a template sensor, which can be tested in the template
+ * editor and reused somewhere else.
  *
- *   conditions: Home Assistant's condition vocabulary, AND-ed. Accepted at the
- *   top level and on every event. Where include/exclude choose *which*
- *   entities, these choose *when* - and a condition with no `entity:` of its
- *   own is about the entity in hand, which is what makes a threshold work
- *   across a whole event:
+ * A grouped event counts, so it may need two wordings. `title`, `status` and
+ * `icon` take a `one`/`many` mapping, and only when the event groups -
+ * ungrouped there is nothing to count and a mapping is a mistake worth
+ * naming:
  *
- *       events:
- *         batteries:
- *           category: alerts
- *           severity: attention
- *           include:
- *             labels: [Battery]
- *           conditions:
- *             - condition: numeric_state
- *               below: 20         # every battery under 20%, one block
+ *     lights:
+ *       group: area
+ *       include: {domains: [light]}
+ *       conditions: [{condition: state, state: "on"}]
+ *       status:
+ *         one: 1 light on
+ *         many: "{n} lights on"
  *
- *   A row that groups opens rather than firing more-info: it shows what it
- *   counted, underneath itself, indented under the title. There was nothing
- *   sensible for it to open before - it fired more-info for whichever lamp the
- *   index happened to reach first, which is not a thing anybody clicked on.
+ * A room group says the room on its title line. Give it a `title` of its own
+ * and the room moves to the detail line rather than disappearing.
  *
- *   The five types, spelled as core spells them:
+ * ---------------------------------------------------------------------------
+ * Conditions
+ *
+ * Home Assistant's condition vocabulary, AND-ed. Where include/exclude choose
+ * *which* entities, these choose *when* - and a condition with no `entity:` of
+ * its own is about the entity in hand, which is what makes a threshold work
+ * across a whole event:
+ *
+ *     batteries:
+ *       category: alerts
+ *       severity: attention
+ *       include:
+ *         labels: [Battery]
+ *       conditions:
+ *         - condition: numeric_state
+ *           below: 20         # every battery under 20%, one block
+ *
+ * The kinds, spelled as core spells them:
  *
  *     numeric_state   entity / attribute / above / below. Strictly above and
  *                     strictly below, so both together means *between*. A
@@ -310,70 +341,11 @@
  *                           - {condition: numeric_state, below: 0.8}
  *                           - {condition: numeric_state, above: 2.5}
  *
- *   Top-level conditions and filters do not apply to `custom` entries. Naming
- *   an entity there is an explicit statement, and a blanket rule elsewhere
- *   quietly overruling it would be the surprise, not the service.
- *
- *   custom: list of entities conventions cannot reach. The four slots map to
- *   the row grammar, and mixing them up is the easy mistake:
- *
- *       title   -> top left      the thing            ("Air purifier")
- *       detail  -> bottom left   where, or about      ("Living Room")
- *       status  -> top right     the state word       ("Fill water reservoir")
- *       (time)  -> bottom right  automatic
- *
- *   `detail` is not "the text to show" - it is the *location* slot. Put the
- *   state in `status`, or the row loses its right-hand column and stops
- *   lining up with every other row on the card. Omitting `detail` falls back
- *   to the entity's area, which is usually what you want.
- *
- *     - entity: sensor.laundry_room_dryer_state
- *       state_not: [Inactive, Standby, Off]   # or `state:` for a whitelist.
- *                                  # Both take a value or a list. Neither
- *                                  # given means "whenever it is doing
- *                                  # something" - see RESTING_STATES.
- *       conditions:                # all must hold, AND. Home Assistant's own
- *                                  # condition vocabulary - see below.
- *         - condition: time
- *           after: "20:00"
- *           before: "06:00"
- *         - condition: state
- *           entity: binary_sensor.x
- *           state: "on"
- *       title: Dryer
- *       detail: "{state}"          # humanised; {state.raw} is not.
- *                                  # also {attr.x}, optionally @other.entity
- *       status: "{state}"
- *       severity:                  # a word, or a mapping from state to word
- *         Done: attention          # alert | attention | active | info
- *         Door open: alert
- *         default: active
- *       group: appliances          # must be an id under `groups`
- *       time_mode:                 # also a word or a state mapping
- *         Done: ago                # since | until | ago | remaining
- *         default: since
- *
- *   text:  every string the card writes itself, for translating or rewording.
- *          Any subset; the rest keep their defaults. Nested one level:
- *
- *            text:
- *              empty:     Nothing going on
- *              elsewhere: Elsewhere
- *              severities: {alert: …, attention: …, active: …, info: …}
- *              climate:    {heating: Heating, idle: Idle, …}
- *              status:     {running: …, open: …, open_pct: "{n}% open"}
- *              lights:     {one: "1 light on", many: "{n} lights on"}
- *              time:       {minute: "{n}m", remaining: "{n} remaining", …}
- *              strip:      {timer: [Timer], climate: [Heating, …], …}
- *
- *          Section headings are not here - they live in `groups`, because a
- *          section list is structure the installation defines.
- *
- *          Entity names, area names, and media/cover/vacuum states are not in
- *          here - Home Assistant already knows those in the user's language.
+ * A row that groups opens rather than firing more-info: it shows what it
+ * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-10e";
+const CARD_BUILD = "2026-08-10f";
 
 /* ------------------------------------------------------------------ config */
 
@@ -528,18 +500,6 @@ const DEFAULT_TEXT = {
 };
 
 const DEFAULTS = {
-  /* The sections, in render order, when group_by is "category".
-   *
-   * Order is a priority statement: things that need a human come first, then
-   * things that are running, then things that are merely scheduled.
-   *
-   * An id an event names that is not in here is created and appended with a
-   * humanised label, so this arranges sections rather than registering them.
-   * Listing one is how you set its order and its heading.
-   *
-   * Labels live here rather than under `text` because a section list is
-   * structure the installation defines, not vocabulary the card ships. */
-  categories: [],
   /* category | area | severity | none */
   group_by: "category",
   /* recent | duration | name — see _sortEvents */
@@ -564,11 +524,11 @@ const DEFAULTS = {
    * the same kind of thing as the ones above them, and a glance panel that
    * says "4 more" without a way to see them is asking you to go elsewhere. */
   overflow: "scroll",
-  /* The name of a library kept by the Home Events integration. Null means
-   * this card is the only place its events are written, which is the whole
-   * behaviour of the card before the integration existed and stays the
-   * behaviour of a card installed without it. */
-  preset: null,
+  /* Which library this card draws. Events, sections and the house's own
+   * facts all live there and nowhere else: what this card configures is how
+   * that library reads on this dashboard, which is the only thing a card is
+   * in a position to know. */
+  preset: "default",
   /* A card that vanishes leaves a hole in a sections layout, and a hole reads
    * as a broken card rather than as a quiet house. Off by default. */
   hide_when_empty: false,
@@ -595,43 +555,7 @@ const DEFAULTS = {
    * as a deliberate structure. Set it false for `group_by: area`, which can
    * produce eight rooms and therefore eight small surfaces. */
   split_sections: true,
-  /* Superseded by text.empty; still accepted, see setConfig. */
-  empty_text: null,
-  /* Filters every source runs its entities through, on top of its own. See
-   * the filter engine below for the shape; a bare list means entity_globs. */
-  include: [],
-  exclude: [],
-  /* Registry areas that are filing cabinets rather than places, by id or name.
-   * An entity in one of these is shown without a location instead of claiming
-   * to be somewhere called "System". Empty, because which areas those are is
-   * a fact about your registry and not one this card can guess. */
-  non_areas: [],
-  /* Home Assistant conditions every row must satisfy, whichever source found
-   * it. Where include/exclude choose entities, these choose moments - and
-   * numeric_state makes a measurement a first-class thing to watch. */
-  conditions: [],
 
-  /* What the card watches. Empty, and deliberately: an event is a name, a
-   * filter, when it applies and how its rows read, and every one of those is
-   * yours to decide. There is nothing a card can assume about a house it has
-   * never seen. See the doc block above for the shape.
-   *
-   *     events:
-   *       lights:
-   *         category: lights
-   *         group: area
-   *         include:
-   *           domains: [light]
-   *           floors: [first_floor, second_floor]
-   *         conditions:
-   *           - condition: state
-   *             state: "on"
-   *             for: "00:01:00"
-   *         status:
-   *           one: 1 light on
-   *           many: "{n} lights on"
-   */
-  events: {},
 
 };
 
@@ -647,6 +571,19 @@ function esc(s) {
 function isPlainObject(v) {
   return v && typeof v === "object" && !Array.isArray(v);
 }
+
+/* Keys a card used to take, and where each of them lives now. Kept as a map
+ * rather than deleted outright: the answer to "where did my events go" has to
+ * come from the card that stopped accepting them. */
+const MOVED = {
+  events: "every event lives in the Event Manager's library",
+  categories: "sections are arranged in the Event Manager, under Sections",
+  include: "each event has its own Include",
+  exclude: "each event has its own Except",
+  conditions: "each event has its own When",
+  non_areas: "`non_areas` is a fact about the house, so it lives in the library",
+  empty_text: "write `text: {empty: ...}`",
+};
 
 function mergeConfig(base, over) {
   const out = Array.isArray(base) ? base.slice() : { ...base };
@@ -1351,6 +1288,45 @@ function candidateDomains(filter) {
  * a group heading, so both are stripped and what remains is the device. */
 const SEPARATOR = " \u00b7 ";
 
+/* A replace, on whatever a placeholder produced.
+ *
+ * Friendly names are written for the state machine and end in the word the
+ * integration needed - "Dryer | State", "Air Purifier | Error" - so a row that
+ * says "Dryer · State" is saying one word too many. This is the smallest thing
+ * that fixes it without becoming a language:
+ *
+ *     title:  "{name|s/ · State$//}"
+ *     status: "{attr.program|s/^p_//}"
+ *
+ * One replace per placeholder, JavaScript's own regular expressions and its
+ * own flags, $1 in the replacement. Deliberately no branching: a row that
+ * needs an `if` is a template sensor, which can be tested in the template
+ * editor and reused somewhere else.
+ */
+const FILTER_RE = /^s\/((?:\\.|[^/])*)\/((?:\\.|[^/])*)\/([gimsuy]*)$/;
+const filterWarned = new Set();
+
+function applyFilter(value, spec) {
+  if (!spec) return value;
+  const m = FILTER_RE.exec(spec);
+  if (m) {
+    try {
+      return value.replace(new RegExp(m[1], m[3]), m[2]);
+    } catch (err) {
+      warnFilter(spec, (err && err.message) || err);
+      return value;
+    }
+  }
+  warnFilter(spec, "it is not s/pattern/replacement/flags");
+  return value;
+}
+
+function warnFilter(spec, why) {
+  if (filterWarned.has(spec)) return;
+  filterWarned.add(spec);
+  console.warn(`home-event-card: cannot apply "|${spec}" - ${why}.`);
+}
+
 function splitName(friendly, entityId) {
   const raw = String(friendly || entityId || "");
   const parts = raw
@@ -1542,71 +1518,34 @@ class HomeEventCard extends HTMLElement {
           `${SORT_MODES.join(", ")}.`
       );
     }
-    if (!isPlainObject(cfg.events)) cfg.events = {};
-    /* Sections, in render order, with their headings. An id an event names
-     * that is not in here is not an error - it is a section you have not got
-     * round to labelling, so it is created and appended. The list arranges
-     * sections; it does not register them. */
-    if (!Array.isArray(cfg.categories)) {
-      throw new Error("home-event-card: `categories` must be a list of {id, label}.");
-    }
-    const catIds = [];
-    for (const c of cfg.categories) {
-      if (!isPlainObject(c) || !c.id) {
+    /* What used to be written here and where it went.
+     *
+     * A retired key is named rather than ignored: a dashboard whose `events:`
+     * block quietly stopped doing anything would be a card that had gone
+     * blank for no stated reason, which is the worst way to find out about a
+     * change. Unknown keys are still let through - the top level is shared
+     * with Lovelace, which writes `grid_options` and friends into it. */
+    for (const key of Object.keys(given)) {
+      if (MOVED[key]) {
         throw new Error(
-          "home-event-card: every entry under `categories` needs an `id`, " +
-            "e.g. `- id: appliances` with `label: Appliances`."
+          `home-event-card: \`${key}\` is not a card option any more - ` +
+            `${MOVED[key]}. The card says how the library reads on this ` +
+            "dashboard; the library says what the house is watching."
         );
       }
-      checkKeys(["id", "label", "sort"], c, `category "${c.id}"`);
-      if (c.sort != null && SORT_MODES.indexOf(c.sort) === -1) {
-        throw new Error(
-          `home-event-card: unknown sort "${c.sort}" on category "${c.id}". ` +
-            `Valid values are ${SORT_MODES.join(", ")}.`
-        );
-      }
-      if (catIds.indexOf(c.id) !== -1) {
-        throw new Error(`home-event-card: duplicate category id "${c.id}".`);
-      }
-      catIds.push(c.id);
     }
 
-    /* Unknown keys throw rather than being ignored.
-     *
-     * This exists because `appliances: { exclude_areas: [...] }` was a
-     * perfectly reasonable guess that silently did nothing, and a filter that
-     * silently does nothing is worse than one that does not exist - you go
-     * looking for the bug in the wrong place. Strictness is limited to the
-     * `events` block, which is entirely this card's namespace;
-     * the top level is shared with Lovelace and stays lenient.
-     *
-     * Source *names* are the exception: every one is yours, so an unknown name
-     * is a new source rather than a typo. What catches a mistyped one is that
-     * a source without an `include` is an error. */
-    checkConditions(cfg.conditions, "the top level");
-
-    /* Filters are compiled once here rather than on every render: this runs
-     * against every state in the house, per event, several times a second. */
-    compileFilters(cfg, "");
-    this._compileEvents(cfg, cfg.events);
-
-    /* Areas that are filing cabinets, slugged once so the render path is a
-     * lookup rather than a scan. */
-    cfg._nonAreas = new Set(asList(cfg.non_areas).map(areaSlug));
+    /* Everything below is filled in from the library, and empty until it
+     * arrives. The card holds no events of its own. */
+    cfg.categories = [];
+    cfg.events = {};
+    cfg._nonAreas = new Set();
+    this._compileEvents(cfg, {});
 
     cfg.text = mergeText(DEFAULT_TEXT, given.text, "text");
-    /* `empty_text` predates the text block. Honoured so an existing dashboard
-     * keeps working; `text.empty` wins if somebody has written both. */
-    if (cfg.empty_text != null && !(given.text && given.text.empty != null)) {
-      cfg.text.empty = cfg.empty_text;
-    }
 
-    cfg._inline = given.events || {};
-    /* Whether the dashboard arranged its own sections. If it did, a preset's
-     * categories are not allowed to reorder them underneath it. */
-    this._ownCategories = Array.isArray(given.categories) && given.categories.length > 0;
-    /* Same rule for ordering: a card that says how it wants its rows keeps
-     * saying it, and a card that says nothing follows the library. */
+    /* A card that says how it wants its rows keeps saying it; one that says
+     * nothing follows the library. */
     this._ownSort = given.sort != null;
 
     this._config = cfg;
@@ -1699,7 +1638,7 @@ class HomeEventCard extends HTMLElement {
      * a filter mentions them, which most configs never will. */
     cfg._wantRegistries = {};
     for (const k of ["labels", "floors"]) {
-      cfg._wantRegistries[k] = cfg._needs[k] ||
+      cfg._wantRegistries[k] =
         Object.keys(cfg.events).some((n) => cfg.events[n]._needs[k]);
     }
 
@@ -1789,7 +1728,7 @@ class HomeEventCard extends HTMLElement {
    * the card was rendering perfectly well a moment ago. */
   _applyPreset(data) {
     const cfg = this._config;
-    const events = { ...(data.events || {}), ...(cfg._inline || {}) };
+    const events = data.events || {};
     /* Compiled onto a copy and only then committed. Compiling writes five keys
      * that have to agree with each other, and a throw halfway through left the
      * index describing events the card no longer had. */
@@ -1807,12 +1746,25 @@ class HomeEventCard extends HTMLElement {
                      "_wantRegistries"]) {
       cfg[k] = next[k];
     }
-    if (!this._ownCategories && Array.isArray(data.categories)) {
-      cfg.categories = data.categories;
+    if (Array.isArray(data.categories)) {
+      /* Only the parts a card draws with, and only from entries that name a
+       * section. The library is validated where it is written; this is the
+       * card refusing to be taken down by a hand-edited store. */
+      cfg.categories = data.categories
+        .filter((c) => isPlainObject(c) && c.id)
+        .map((c) => ({
+          id: c.id,
+          label: c.label,
+          sort: SORT_MODES.indexOf(c.sort) === -1 ? undefined : c.sort,
+        }));
     }
     if (!this._ownSort && SORT_MODES.indexOf(data.sort) !== -1) {
       cfg.sort = data.sort;
     }
+    /* Areas that are filing cabinets rather than places - a fact about the
+     * registry, so it is written once in the library instead of on every card
+     * that reads it. Slugged here so the render path is a lookup. */
+    cfg._nonAreas = new Set(asList(data.non_areas).map(areaSlug));
     this._sig = null;
     this._idx = null;
     if (this._hass) {
@@ -2138,24 +2090,21 @@ class HomeEventCard extends HTMLElement {
    * two separate ladders rather than one merged block, so an event can include
    * something the top level is quiet about without also overriding a
    * top-level exclusion. */
+  /* Whether this entity is one of the event's, and whether now is one of its
+   * moments. Both questions belong to the event: a card-wide filter used to
+   * sit in front of this, and an event that says what it covers is a better
+   * answer than an event plus a card that quietly disagrees. */
   _excluded(entityId, sourceCfg, stateObj) {
-    const cfg = this._config;
     const src = sourceCfg || {};
-    const need = cfg._needs;
-    const sneed = src._needs || NO_NEEDS;
+    const need = src._needs || NO_NEEDS;
     const ctx = { area: null, labels: null, devices: null, floors: null };
-    if (need.areas || sneed.areas) {
+    if (need.areas) {
       ctx.area = this._areaName(entityId, stateObj || this._hass.states[entityId]);
     }
-    if (need.labels || sneed.labels) ctx.labels = this._labels(entityId);
-    if (need.devices || sneed.devices) ctx.devices = this._deviceKeys(entityId);
-    if (need.floors || sneed.floors) ctx.floors = this._floorKeys(entityId);
-    if (!passesFilter(cfg._include, cfg._exclude, entityId, ctx)) return true;
+    if (need.labels) ctx.labels = this._labels(entityId);
+    if (need.devices) ctx.devices = this._deviceKeys(entityId);
+    if (need.floors) ctx.floors = this._floorKeys(entityId);
     if (!passesFilter(src._include, src._exclude, entityId, ctx)) return true;
-    /* include/exclude say which entities; conditions say when. Both live on
-     * the top level and on every source, and both are evaluated here so the
-     * answer does not depend on which source found the entity. */
-    if (!this._conditionsMet(cfg.conditions, entityId)) return true;
     if (!this._conditionsMet(src.conditions, entityId)) return true;
     return false;
   }
@@ -2324,7 +2273,14 @@ class HomeEventCard extends HTMLElement {
           m.sub && m.sub === b.area ? { ...m, sub: "" } : m
         ),
       };
-      out.push(ev(this._applyConfig(e, plural(cfg, n), b.ids[0], vars)));
+      const row = this._applyConfig(e, plural(cfg, n), b.ids[0], vars);
+      /* A room group says the room on its title line. A `title:` template
+       * takes that line - "Lights", say - and the room then has nowhere left
+       * to be said, which is how a card ended up with two rows called Lights
+       * and no way to tell which room either was about. So it moves to the
+       * detail line, unless a `detail:` template has claimed that too. */
+      if (b.area && row.title !== label && !row.sub) row.sub = b.area;
+      out.push(ev(row));
     }
   }
 
@@ -2485,22 +2441,27 @@ class HomeEventCard extends HTMLElement {
     const hass = this._hass;
     const v = vars || {};
     return String(text).replace(/\{([^}]+)\}/g, (_, expr) => {
-      const [path, target] = expr.split("@");
+      /* The first pipe separates what to read from what to do with it. Only
+       * the first: a pattern may have alternation in it, and `s/a|b//` is one
+       * filter rather than two. */
+      const cut = expr.indexOf("|");
+      const filter = cut === -1 ? "" : expr.slice(cut + 1).trim();
+      const [path, target] = (cut === -1 ? expr : expr.slice(0, cut)).split("@");
       const p = path.trim();
-      if (!target && v[p] != null) return String(v[p]);
+      const out = (value) => applyFilter(String(value == null ? "" : value), filter);
+      if (!target && v[p] != null) return out(v[p]);
       const st = hass.states[(target || entityId).trim()];
-      if (!st) return "";
+      if (!st) return out("");
       /* {state} is humanised, {state.raw} is not. Integration states are
        * written for state machines - armed_away, water_shortage - and this
        * lands in a row a person reads. Attributes are left alone: they are
        * already prose more often than not. */
-      if (p === "state") return humanise(st.state);
-      if (p === "state.raw") return st.state;
+      if (p === "state") return out(humanise(st.state));
+      if (p === "state.raw") return out(st.state);
       if (p.startsWith("attr.")) {
-        const val = st.attributes[p.slice(5)];
-        return val == null ? "" : String(val);
+        return out(st.attributes[p.slice(5)]);
       }
-      return "";
+      return out("");
     });
   }
 
@@ -3287,13 +3248,18 @@ export function matchEntities(hass, spec) {
    * throws Illegal constructor. The registered one is also the more honest
    * answer - it is the build the dashboard is actually drawing with. */
   const probe = document.createElement("home-event-card");
-  probe.setConfig({
-    type: "custom:home-event-card",
-    events: { probe: exclude ? { include, exclude } : { include } },
-  });
+  probe.setConfig({ type: "custom:home-event-card" });
   probe._hass = hass;
   probe._reg = registries || {};
-  const cfg = probe._config.events.probe;
+  /* Compiled straight into a holder of its own. `events:` is not something a
+   * card config says any more - the library says it - and what this needs is
+   * one compiled event rather than a card that has been talked into holding
+   * one. */
+  const holder = {};
+  probe._compileEvents(holder, {
+    probe: exclude ? { include, exclude } : { include },
+  });
+  const cfg = holder.events.probe;
   const out = [];
   for (const id of Object.keys(hass.states || {})) {
     if (!probe._excluded(id, cfg, hass.states[id])) out.push(id);
@@ -3313,12 +3279,13 @@ export function matchEntities(hass, spec) {
 export function passingEntities(hass, ids, conditions) {
   if (!conditions || !conditions.length) return (ids || []).slice();
   const probe = document.createElement("home-event-card");
-  probe.setConfig({
-    type: "custom:home-event-card",
-    events: { probe: { include: { entity_globs: ["*"] }, conditions } },
-  });
+  probe.setConfig({ type: "custom:home-event-card" });
   probe._hass = hass;
-  const compiled = probe._config.events.probe.conditions;
+  const holder = {};
+  probe._compileEvents(holder, {
+    probe: { include: { entity_globs: ["*"] }, conditions },
+  });
+  const compiled = holder.events.probe.conditions;
   return (ids || []).filter((id) => probe._conditionsMet(compiled, id));
 }
 

@@ -2254,10 +2254,17 @@ textarea.yaml {
    and where it sits. */
 .crits.wide { align-items: stretch; }
 .crits.wide > .ghost { align-self: flex-start; }
-.secrow { gap: 8px; }
-.secrow .secname { flex: 1 1 200px; min-width: 120px; }
-.secrow select { flex: 0 0 auto; }
-.secrow .count-of { font-size: 12px; white-space: nowrap; }
+/* A grid, not a row of flexed things: "1 event" and "4 events" are different
+   widths, and a row that sizes its own columns made every name field a
+   different length. The columns are the same for every section or they are
+   not columns. */
+.crits.wide .secrow {
+  display: grid; gap: 8px; align-items: center;
+  grid-template-columns: minmax(0, 1fr) 170px 72px auto auto auto;
+}
+.secrow .secname { min-width: 0; }
+.secrow select { width: 100%; }
+.secrow .count-of { font-size: 12px; white-space: nowrap; text-align: end; }
 /* The one that was asked for, when a section heading in the list is what
    opened this view. */
 .secrow.asked { outline: 1px solid var(--primary-color); outline-offset: 3px;

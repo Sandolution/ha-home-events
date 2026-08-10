@@ -212,10 +212,12 @@ def validate_preset(data: Any) -> dict:
         _fail(f"A preset is a mapping with \"events\" in it, but this is "
               f"{_kind(data)}.")
 
-    unknown = [k for k in data if k not in ("name", "sort", "categories", "events")]
+    unknown = [k for k in data
+               if k not in ("name", "sort", "non_areas", "categories", "events")]
     if unknown:
         _fail("Unknown key(s) in the preset: " + ", ".join(unknown)
-              + '. A preset holds "name", "sort", "categories" and "events".')
+              + '. A preset holds "name", "sort", "non_areas", "categories" '
+              'and "events".')
 
     # How the rows in a section read, for every section that does not say
     # otherwise. A card that states its own `sort` keeps it; this is what a
@@ -223,6 +225,13 @@ def validate_preset(data: Any) -> dict:
     if data.get("sort") is not None and data["sort"] not in SORT_MODES:
         _fail(f"Sort {data['sort']!r} is not one of: " + ", ".join(SORT_MODES)
               + ".")
+
+    # Registry areas that are filing cabinets rather than places. A fact about
+    # the house, so it is written once here instead of on every card.
+    non_areas = data.get("non_areas")
+    if non_areas is not None and not isinstance(non_areas, list):
+        _fail('"non_areas" is a list of area ids or names, but this is '
+              f"{_kind(non_areas)}.")
 
     events = data.get("events")
     if events is None:
@@ -261,4 +270,6 @@ def validate_preset(data: Any) -> dict:
     # default should not grow a key saying it has none.
     if data.get("sort"):
         out["sort"] = data["sort"]
+    if data.get("non_areas"):
+        out["non_areas"] = list(data["non_areas"])
     return out
