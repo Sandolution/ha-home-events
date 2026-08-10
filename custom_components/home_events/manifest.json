@@ -1,0 +1,14 @@
+{
+  "domain": "home_events",
+  "name": "Home Events",
+  "codeowners": ["@sandolution"],
+  "config_flow": true,
+  "dependencies": ["http", "panel_custom", "websocket_api"],
+  "documentation": "https://github.com/sandolution/home-events",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/sandolution/home-events/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

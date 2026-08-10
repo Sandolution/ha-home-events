@@ -1,0 +1,14 @@
+{
+  "title": "Home Events",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Events",
+        "description": "Adds an Events editor to the sidebar. Cards read the library from it by name; nothing here needs configuring."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Home Events is already set up."
+    }
+  }
+}
