@@ -23,20 +23,70 @@
  * in the same columns and the list can be read down rather than card by card.
  *
  * ---------------------------------------------------------------------------
- * Discovery over declaration
+* One idea: an event
  *
- * The entities in this house follow strict conventions - `area_device_*` ids
- * and "Area | Device | Detail" friendly names - so the card discovers its own
- * events instead of being told about them, the same trick home-utility-card
- * uses for its appliance ranking. An empty config:
+ * An event is a name, what it covers, when it applies, and how the row reads.
+ * There is nothing else - no second block for the entities a filter cannot
+ * find, no third for the ones that need their own wording.
  *
- *     type: custom:home-event-card
+ *     events:
+ *       lights:
+ *         category: lights
+ *         group: area                 # one row per room, with a count
+ *         include:
+ *           domains: [light]
+ *         conditions:
+ *           - condition: state
+ *             state: "on"
+ *             for: "00:01:00"
+ *         status:
+ *           one: 1 light on
+ *           many: "{n} lights on"
  *
- * already finds the lights, appliances, climate, timers, media and covers.
- * Config exists to *exclude* and to tune, not to enumerate. Adding a smart plug
- * with a `sensor.<area>_<device>_state` twin makes it appear on its own.
+ *       dryer_done:
+ *         category: appliances
+ *         include: {entities: [sensor.laundry_room_dryer_state]}
+ *         conditions: [{condition: state, state: Done}]
+ *         title: Dryer
+ *         status: "{state}"
+ *         severity: attention
+ *         time_mode: ago
+ *
+ * This replaced `sources` and `custom`, which were the same idea written twice
+ * - one filtered and let the domain render, the other named an entity and
+ * spelled the row out - with 29 options between them and no rule for which to
+ * reach for. Six of those options existed only because a source could not
+ * express a state test: `resting`, `min_minutes`, `show_idle`,
+ * `include_paused`, `show_armed`, `show_disarmed`. They are conditions now, in
+ * core's vocabulary rather than this card's, and `min_minutes` in particular is
+ * just `for:`.
+ *
+ * `severity` and `time_mode` take one word, not a mapping from state. A dryer
+ * that is amber when finished and red with its door open is two events with
+ * different conditions, because that is what it is: two different things
+ * happening to the same appliance. The mapping hid the line between them.
  *
  * ---------------------------------------------------------------------------
+ * What the card still knows, and what it does not
+ *
+ * It knows how to *render* seven Home Assistant domains - light, climate,
+ * timer, media_player, cover, vacuum, alarm_control_panel. A thermostat gets
+ * its two temperatures, a cover stopped part-way gets a percentage, a timer
+ * counts down, and every state that core translates arrives in your language.
+ * That is knowledge about Home Assistant and true in any installation, so it
+ * costs nothing and is there whether you ask or not. Any other domain renders
+ * plainly: name, area, state, how long.
+ *
+ * It does not know which of them you want, in what state, or under what
+ * heading. An empty config draws an empty card, on purpose - and an event with
+ * no `conditions` shows everything its `include` matches, in every state,
+ * because deciding otherwise would be the card guessing again.
+ *
+ * The one exception is `unavailable` and `unknown`, which stay hidden unless a
+ * condition names one. Anything else would put the same two lines of
+ * boilerplate on every event anybody ever writes.
+ *
+  * ---------------------------------------------------------------------------
  * Severity, not colour-per-domain
  *
  * The old cards coloured by domain (radiators green, ventilation green,
@@ -73,36 +123,186 @@
  * Config
  *
  *   type: custom:home-event-card       (required, and sufficient)
+*   categories:      the sections, in order, and their headings. An id an
+ *                    event names that is not in here is created and appended,
+ *                    so this arranges sections rather than registering them.
+ *
+ *                      categories:
+ *                        - id: alerts
+ *                          label: Needs attention
+ *                        - id: appliances
+ *                          label: Appliances
+ *
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name            default recent
  *   max:             integer, default 14; the rest become a "+n more" line
- *   compact:         false | true | "auto" — one line per event. "auto"
- *                    tightens once past compact_threshold rows
- *   compact_threshold: integer, default 8
  *   max_per_section: rows a section shows before overflowing, 0 = uncapped
  *   overflow:        scroll | hide — what happens to the rest
  *   hide_when_empty: bool, default false
- *   empty_text:      string shown when the house is quiet
+ *   max_height:      a ceiling for the whole card, past which it scrolls.
+ *                    A bare number is pixels. `max` and `max_per_section` cap
+ *                    by row count, which is the unit to use when you know what
+ *                    a row is worth; this is the one for when what you know is
+ *                    how much wall you have
+ *   collapsible:     bool, default false — section headings fold their rows.
+ *                    What is folded is a reading position, not a preference,
+ *                    so it is not remembered across a reload
+ *   empty_text:      superseded by text.empty; still accepted
  *   promote_alerts:  bool, default true — anything red is filed under
  *                    "Needs attention" rather than its own category
  *   split_sections:  bool, default true — a card per section. Turn off for
  *                    `group_by: area`, which otherwise makes a card per room
- *   exclude:         list of entity id substrings, hidden from every source
- *   exclude_areas:   list of area names or ids, hidden from every source
- *   animate:         bool, default true
+ *   include / exclude:  filters. Recorder's two keys plus the four a service
+ *                    call targets, which between them is every way core lets
+ *                    you name a set of things. Accepted at the top level and
+ *                    on any source; both must pass.
  *
- *   sources: every source takes `enabled`, `exclude` and `exclude_areas`,
- *   plus its own options:
- *     lights:     aggregate (area|entity), min_minutes
- *     appliances: include_standby (default false)
- *     climate:    show_idle
- *     timers:     —
- *     media:      include_paused (default false)
- *     house:      —
+ *                      exclude:
+ *                        domains:      [automation, update]
+ *                        entity_globs: ["sensor.sun*", "weather.*"]
+ *                        entities:     [sensor.date]
+ *                        devices:      ["Kitchen | Dishwasher"]
+ *                        areas:        [Garden]
+ *                        floors:       [Second Floor]
+ *                        labels:       [Battery]
  *
- *   Each source also accepts the shorthand `lights: false`.
- *   An unknown key under `sources` or `custom` throws rather than being
- *   ignored, and names the nearest valid option.
+ *                    Name more than one dimension and the block must say how
+ *                    they combine - there is no honest default:
+ *
+ *                      include:
+ *                        match: all        # every one of them must hold
+ *                        domains: [light]
+ *                        floors: [first_floor, second_floor]
+ *
+ *                    `match: all` is the intersection - lights upstairs.
+ *                    `match: any` is the union, which is what recorder does:
+ *                    every light in the house *and* everything upstairs. On
+ *                    this install those are 19 entities and 387. A block
+ *                    naming one dimension does not need it.
+ *
+ *                    A bare list is shorthand for `entity_globs`. Globs are
+ *                    anchored: `sensor.sun*` does not match
+ *                    binary_sensor.sunroom. Everything else is matched on a
+ *                    slug of the id and of the display name both, which stop
+ *                    being the same string the first time somebody renames
+ *                    one. Labels and areas count whether they sit on the
+ *                    entity, its device or its area - the same expansion a
+ *                    service target does.
+ *
+ *                    Precedence is a specificity ladder - entities (7),
+ *                    entity_globs (6), devices (5), labels (4), areas (3),
+ *                    floors (2), domains (1). Narrower beats broader and
+ *                    exclude wins a tie, so `exclude: {domains: [switch]}`
+ *                    with `include: {entities: [switch.pond_pump]}` keeps the
+ *                    pump and drops the other 139, and an area exclude carves
+ *                    a room out of a floor include. If an `include` is given
+ *                    and nothing in it matches, the entity is out - which
+ *                    means an area- or floor-based include drops everything
+ *                    with no area, timers among them.
+ *
+*   events: the whole of what the card shows. A name of your choosing, an
+ *   `include` saying what it covers, and how its rows read. The name is yours -
+ *   `lights`, `upstairs`, `dryer_done` - and only `include` is required:
+ *
+ *       events:
+ *         pumps:
+ *           category: pumps
+ *           include:
+ *             entity_globs: ["switch.*_pump"]
+ *
+ *   Every event takes:
+ *
+ *     enabled       false to switch it off without deleting it
+ *     category      the section it feeds; created if undeclared
+ *     group         area collapses its rows into one per room, with a count;
+ *                   all collapses them into a single row. `true` means area
+ *     include       required - see the filter block above
+ *     exclude
+ *     conditions    when it applies - see below. Nothing is implicit: without
+ *                   any, every entity the include matches shows, in any state
+ *     severity      alert | attention | active | info. One word. Two meanings
+ *                   is two events
+ *     time_mode     since | until | ago | remaining. One word, same reason
+ *     show_time     false drops the time column
+ *     title         template; defaults to what the domain decided
+ *     detail        template for the bottom-left slot, usually the location
+ *     status        template for the state word, top right
+ *     icon          overrides the entity's own
+ *
+ *   `title`, `detail` and `status` are templates, not fixed strings:
+ *
+ *     {state}       humanised; {state.raw} is not
+ *     {attr.foo}    an attribute, and {attr.foo@other.entity} another entity's
+ *     {name}        the friendly name with the area stripped off the front
+ *     {area}        where it is
+ *     {n}           how many landed in this row - grouped events only
+ *
+ *   A grouped event counts, so it needs two wordings. `title`, `status` and
+ *   `icon` may take a `one`/`many` mapping, and only when the event groups -
+ *   ungrouped there is nothing to count and a mapping is a mistake worth
+ *   naming:
+ *
+ *       events:
+ *         lights:
+ *           group: area
+ *           include: {domains: [light]}
+ *           conditions: [{condition: state, state: "on"}]
+ *           status:
+ *             one: 1 light on
+ *             many: "{n} lights on"
+ *           icon:
+ *             one: mdi:lightbulb
+ *             many: mdi:lightbulb-group
+ *
+ *   An unknown key throws and names the nearest valid one. An event *name* is
+ *   never unknown, since every one is yours; what catches a typo is that an
+ *   event without an `include` is an error.
+ *
+ *   conditions: Home Assistant's condition vocabulary, AND-ed. Accepted at the
+ *   top level and on every event. Where include/exclude choose *which*
+ *   entities, these choose *when* - and a condition with no `entity:` of its
+ *   own is about the entity in hand, which is what makes a threshold work
+ *   across a whole event:
+ *
+ *       events:
+ *         batteries:
+ *           category: alerts
+ *           severity: attention
+ *           include:
+ *             labels: [Battery]
+ *           conditions:
+ *             - condition: numeric_state
+ *               below: 20         # every battery under 20%, one block
+ *
+ *   A row that groups opens rather than firing more-info: it shows what it
+ *   counted, underneath itself, indented under the title. There was nothing
+ *   sensible for it to open before - it fired more-info for whichever lamp the
+ *   index happened to reach first, which is not a thing anybody clicked on.
+ *
+ *   The five types, spelled as core spells them:
+ *
+ *     numeric_state   entity / attribute / above / below. Strictly above and
+ *                     strictly below, so both together means *between*. A
+ *                     bound may be a number or the id of an entity holding
+ *                     one, so a limit can live in an input_number. A value
+ *                     that is not a number - unavailable, a word, a missing
+ *                     attribute - satisfies neither bound.
+ *     state           entity / state / state_not, as Lovelace card visibility
+ *     time            after / before / weekday; the window wraps midnight
+ *     and / or / not  nested `conditions:`. `not` passes when none of them do,
+ *                     which is how core defines it. This is what a two-sided
+ *                     check needs: pressure below 0.8 *or* above 2.5 is not an
+ *                     AND list, and numeric_state with both bounds means the
+ *                     band rather than outside it:
+ *
+ *                       - condition: or
+ *                         conditions:
+ *                           - {condition: numeric_state, below: 0.8}
+ *                           - {condition: numeric_state, above: 2.5}
+ *
+ *   Top-level conditions and filters do not apply to `custom` entries. Naming
+ *   an entity there is an explicit statement, and a blanket rule elsewhere
+ *   quietly overruling it would be the surprise, not the service.
  *
  *   custom: list of entities conventions cannot reach. The four slots map to
  *   the row grammar, and mixing them up is the easy mistake:
@@ -117,108 +317,219 @@
  *   lining up with every other row on the card. Omitting `detail` falls back
  *   to the entity's area, which is usually what you want.
  *
- *     - entity: alarm_control_panel.alarm_master
- *       when: disarmed             # state, or list; omit for "not off/idle"
- *       conditions:                # all must hold, AND
- *         - after: "20:00"         # a time window; wraps midnight
+ *     - entity: sensor.laundry_room_dryer_state
+ *       state_not: [Inactive, Standby, Off]   # or `state:` for a whitelist.
+ *                                  # Both take a value or a list. Neither
+ *                                  # given means "whenever it is doing
+ *                                  # something" - see RESTING_STATES.
+ *       conditions:                # all must hold, AND. Home Assistant's own
+ *                                  # condition vocabulary - see below.
+ *         - condition: time
+ *           after: "20:00"
  *           before: "06:00"
- *         - weekday: [mon, tue, wed, thu, fri]   # optional
- *         - entity: binary_sensor.x  # or an entity, with state / state_not
+ *         - condition: state
+ *           entity: binary_sensor.x
  *           state: "on"
- *       title: Alarm
+ *       title: Dryer
  *       detail: "{state}"          # humanised; {state.raw} is not.
  *                                  # also {attr.x}, optionally @other.entity
- *       severity: attention        # alert | attention | active | info
- *       group: alerts
+ *       status: "{state}"
+ *       severity:                  # a word, or a mapping from state to word
+ *         Done: attention          # alert | attention | active | info
+ *         Door open: alert
+ *         default: active
+ *       group: appliances          # must be an id under `groups`
+ *       time_mode:                 # also a word or a state mapping
+ *         Done: ago                # since | until | ago | remaining
+ *         default: since
+ *
+ *   text:  every string the card writes itself, for translating or rewording.
+ *          Any subset; the rest keep their defaults. Nested one level:
+ *
+ *            text:
+ *              empty:     Nothing going on
+ *              elsewhere: Elsewhere
+ *              severities: {alert: …, attention: …, active: …, info: …}
+ *              climate:    {heating: Heating, idle: Idle, …}
+ *              status:     {running: …, open: …, open_pct: "{n}% open"}
+ *              lights:     {one: "1 light on", many: "{n} lights on"}
+ *              time:       {minute: "{n}m", remaining: "{n} remaining", …}
+ *              strip:      {timer: [Timer], climate: [Heating, …], …}
+ *
+ *          Section headings are not here - they live in `groups`, because a
+ *          section list is structure the installation defines.
+ *
+ *          Entity names, area names, and media/cover/vacuum states are not in
+ *          here - Home Assistant already knows those in the user's language.
  */
 
-const CARD_BUILD = "2026-08-06b";
+const CARD_BUILD = "2026-08-10b";
 
 /* ------------------------------------------------------------------ config */
 
-/* Groups are rendered in this order when group_by is "category". The order is
- * a priority statement: things that need a human come first, then things that
- * are running, then things that are merely scheduled. */
-const GROUPS = [
-  { id: "alerts", label: "Needs attention" },
-  { id: "climate", label: "Climate" },
-  { id: "appliances", label: "Appliances" },
-  { id: "media", label: "Media" },
-  { id: "lights", label: "Lights" },
-  { id: "house", label: "House" },
-];
-
 const SEVERITY_RANK = { alert: 0, attention: 1, active: 2, info: 3 };
 
-/* Lights that exist to control other lights, or that are never really "on" in
- * the sense a person means. Adaptive Lighting's switches sit permanently on and
- * would otherwise report every staircase as lit forever; group helpers would
- * double-count their own members; tablet screens are not room lighting.
- *
- * Matched as substrings of the entity id, so these read as naming conventions
- * rather than as a list of specific entities to maintain. */
-const LIGHT_EXCLUDE = [
-  "_group",
-  "_adaptive",
-  "_override",
-  "_lightener",
-  "_screen",
-  "light.dummy",
-];
-
-/* Registry areas used for filing rather than for location. An event that
- * happens in "System" has no useful where. */
-const NON_AREAS = new Set(["other", "system"]);
-
-/* Timers that exist to debounce an automation rather than to time something a
- * person started. */
-const TIMER_EXCLUDE = ["_off_delay"];
-
-/* `sensor.*_state` is the house convention for appliance state machines (see
- * configurations/template/sensor/*.yaml). These suffixes use the same shape for
- * something that is not an appliance. */
-const STATE_SENSOR_EXCLUDE = ["_battery_state", "system_", "_backup_manager_state"];
-
-/* The vocabulary those template sensors emit. Anything not listed is still
- * shown - a new appliance with its own words should appear rather than be
- * silently dropped - but these get the right severity and phrasing. */
-const APPLIANCE_STATES = {
-  active: { severity: "active", label: "Active" },
-  running: { severity: "active", label: "Running" },
-  standby: { severity: "info", label: "Standby" },
-  done: { severity: "attention", label: "Finished" },
-  finished: { severity: "attention", label: "Finished" },
-  "door open": { severity: "alert", label: "Door open" },
-  error: { severity: "alert", label: "Error" },
-  paused: { severity: "info", label: "Paused" },
-  /* The irrigation valves speak snake_case rather than the template sensors'
-   * title case. water_shortage is a real alert; normal_state is this house's
-   * spelling of "nothing to report" and is in APPLIANCE_IDLE below. */
-  water_shortage: { severity: "alert", label: "Water shortage" },
-  low_water: { severity: "alert", label: "Low water" },
+/* Alarm panels. Every other state - the armed_* family - is informational.
+ * The words come from core, which translates all of them; only the weight is
+ * ours to decide. */
+/* Only a panel that has gone off is asking anything of anyone. Arming and
+ * pending are transient and worth noticing; disarmed and armed are states the
+ * house is simply in, and colouring "disarmed" amber all day is how a palette
+ * stops meaning anything. */
+const ALARM_SEVERITY = {
+  triggered: "alert",
+  pending: "attention",
+  arming: "attention",
 };
 
-/* States that mean "nothing to report" and keep the appliance off the list.
+/* Where a row goes when nothing said where it should go. Auto-created like
+ * any other undeclared category, so it costs nothing until something lands in
+ * it. */
+const GENERIC_CATEGORY = "generic";
+
+/* An event: a name, what it covers, when it applies, and how the row reads.
+ * See the doc block at the top for why this is the only such list. */
+const EVENT_KEYS = [
+  "enabled", "category", "group", "include", "exclude", "conditions",
+  "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
+];
+
+/* Slots a grouped event may word two ways, because a row that counts has to
+ * say "1 light on" and "3 lights on". The only mapping left in the schema, and
+ * only here: everything else that used to take one - severity, time_mode -
+ * means writing a second event with its own conditions, which is what those
+ * mappings were always describing. */
+const PLURAL_KEYS = ["title", "status", "icon"];
+
+/* How a grouping event collapses its rows.
  *
- * `standby` is here rather than in the vocabulary above, and that is the whole
- * difference between a useful card and a permanently noisy one: the fridge, the
- * water heater and a TV on standby all sit at "powered but doing nothing"
- * forever. The old dashboard never hit this because it named five appliances by
- * hand; discovery finds every one of them. Set
- * `sources.appliances.include_standby: true` to see them anyway. */
-const APPLIANCE_IDLE = new Set([
-  "off",
-  "inactive",
-  "idle",
-  "standby",
-  "normal_state",
-  "normal",
-  "unknown",
-  "unavailable",
-  "",
-]);
+ *   area   one row per room - "3 lights on" under "Bed Room Lynn"
+ *   all    one row for the lot - "2 playing" under whatever you title it
+ *   false  no grouping
+ *
+ * `area` was the only behaviour and was never written down anywhere, which is
+ * the sort of thing this card keeps finding in itself. It suits lights, where
+ * the room is the subject of the sentence. It suits media much less: speakers
+ * playing in three rooms is one fact about the house, and three rows saying
+ * "1 playing" is the aggregation not aggregating. */
+const GROUP_MODES = [false, true, "area", "all"];
+
+function groupMode(cfg) {
+  if (cfg.group === true) return "area"; // the old spelling
+  return cfg.group === "area" || cfg.group === "all" ? cfg.group : null;
+}
+
+/* Which renderer an entity gets. Domain knowledge, not configuration: a cover
+ * at 40% and a thermostat at 19 -> 21 need different sentences, and that is
+ * true in every installation. Anything not named here renders plainly. */
+const RENDERERS = {
+  light: "_renderLight",
+  climate: "_renderClimate",
+  timer: "_renderTimer",
+  media_player: "_renderMedia",
+  cover: "_renderCover",
+  vacuum: "_renderVacuum",
+  alarm_control_panel: "_renderAlarm",
+};
+
+const SEVERITIES = ["alert", "attention", "active", "info"];
+const TIME_MODES = ["since", "until", "ago", "remaining"];
+
+/* Every string the card writes itself, so the card can be translated or
+ * reworded without touching the code.
+ *
+ * What is deliberately *not* in here is anything Home Assistant can already
+ * say: entity names, area names, zone names, and the states of media players,
+ * covers and vacuums, which core translates into the user's language. Those go
+ * through hass.formatEntityState (see stateLabel) and shipping an English word
+ * for them would be a downgrade, not a feature. What remains is the vocabulary
+ * this card invented - its headings, its counts, and its sense of time.
+ *
+ * `{n}` is the only placeholder, and only where noted. */
+const DEFAULT_TEXT = {
+  /* Section headings for group_by: severity. */
+  severities: {
+    alert: "Needs attention",
+    attention: "Finished",
+    active: "Running",
+    info: "Also happening",
+  },
+  /* Climate, keyed by hvac_action first and hvac mode second. `null` asks Home
+   * Assistant, which has both vocabularies and words hvac_action exactly as
+   * this card used to - plus defrosting, preheating and off, which it did not.
+   * Set a key to override. */
+  climate: {
+    heating: null,
+    cooling: null,
+    drying: null,
+    fan: null,
+    idle: null,
+    defrosting: null,
+    preheating: null,
+    off: null,
+    heat: null,
+    cool: null,
+    dry: null,
+    fan_only: null,
+    heat_cool: null,
+    auto: null,
+  },
+  /* The right-hand state word, where the card supplies it rather than core. */
+  status: {
+    running: "Running",
+    open: "Open",
+    open_pct: "{n}% open", // a cover stopped part-way
+  },
+  /* Words that carry the direction of a duration. Without them a bare
+   * "1h 12m" does not say which way it points, and the washer and the
+   * dishwasher read identically while meaning opposite things. */
+  time: {
+    just_now: "just now",
+    just_started: "Just started",
+    any_moment: "any moment",
+    minute: "{n}m",
+    hour: "{n}h",
+    day: "{n}d",
+    for: "For {n}", // since: something still running
+    ago: "{n} ago", // ago: something that finished
+    in: "in {n}", // until: something not started yet
+    remaining: "{n} remaining", // remaining: a countdown in progress
+  },
+  /* Boilerplate stripped off a friendly name so the row shows the thing rather
+   * than its category. English because the entity names are; a Dutch install
+   * would put its own words here. */
+  strip: {
+    timer: ["Timer"],
+    climate: ["Heating", "Thermostat", "Climate", "Room", "TRV"],
+    media: ["Media Player"],
+  },
+  degree: "°",
+  /* Between a thermostat's current and target temperature. It reads as "moving
+   * toward" rather than the ">" the old templates used, which was actively
+   * wrong when cooling from 25.5 to 18. Swappable because legibility depends on
+   * the screen it lands on: "\u2192" is thin in some faces at 12px, and a wall
+   * tablet is read from across a room. "\u00bb", "\u25b8" or plain "to" all work. */
+  arrow: "\u2192",
+  elsewhere: "Elsewhere", // an event with no area
+  empty: "Nothing going on",
+  more: "+{n} more", // a section's own overflow line
+  more_events: "+{n} more events", // the whole card's overflow line
+  more_event: "+{n} more event",
+};
 
 const DEFAULTS = {
+  /* The sections, in render order, when group_by is "category".
+   *
+   * Order is a priority statement: things that need a human come first, then
+   * things that are running, then things that are merely scheduled.
+   *
+   * An id an event names that is not in here is created and appended with a
+   * humanised label, so this arranges sections rather than registering them.
+   * Listing one is how you set its order and its heading.
+   *
+   * Labels live here rather than under `text` because a section list is
+   * structure the installation defines, not vocabulary the card ships. */
+  categories: [],
   /* category | area | severity | none */
   group_by: "category",
   /* recent | duration | name — see _sortEvents */
@@ -226,15 +537,6 @@ const DEFAULTS = {
   /* Hard cap on rows. The overflow line is more honest than a scrollbar on a
    * wall tablet, where nobody scrolls a glance panel. */
   max: 14,
-  /* One line per event instead of two: true, false, or "auto".
-   *
-   * "auto" is the useful one. Density is not a taste to be set once - it is a
-   * response to how much is happening. A quiet house has room to breathe; a
-   * busy one would rather fit. Above compact_threshold rows the card tightens
-   * itself and keeps roughly twice as much on screen, at the cost of the area
-   * label moving to a suffix. */
-  compact: false,
-  compact_threshold: 8,
   /* Rows a section shows before it starts scrolling. 0 leaves sections
    * uncapped and lets `max` do the work.
    *
@@ -255,82 +557,67 @@ const DEFAULTS = {
   /* A card that vanishes leaves a hole in a sections layout, and a hole reads
    * as a broken card rather than as a quiet house. Off by default. */
   hide_when_empty: false,
-  /* Alert-severity events are filed under "Needs attention" instead of their
-   * own category. Only applies to group_by: category - severity grouping
-   * already collects them, and area grouping would be defeated by it. */
-  promote_alerts: true,
+  /* A ceiling for the whole card, in pixels or any CSS length, past which it
+   * scrolls. `max` and `max_per_section` cap by row count, which is the right
+   * unit when you know what a row is worth; this is the right one when what
+   * you know is how much wall you have. Null leaves the card its natural
+   * height. */
+  max_height: null,
+  /* Section headings toggle their rows. Off by default: a heading that
+   * swallows the list when a sleeve brushes the tablet is a worse card than
+   * one that does not fold. */
+  collapsible: false,
+  /* Where alert-severity rows go instead of their own category: a group id,
+   * or false to leave them where they landed. The section is created if you
+   * have not declared it, like any other. `true` means "alerts" and is kept
+   * for configs written before this took an id.
+   *
+   * Only applies to group_by: category - severity grouping already collects
+   * them, and area grouping would be defeated by it. */
+  promote_alerts: "alerts",
   /* One card per section, separated by a gap, rather than one card with rules
    * in it. True suits `group_by: category`, where four or five sections read
    * as a deliberate structure. Set it false for `group_by: area`, which can
    * produce eight rooms and therefore eight small surfaces. */
   split_sections: true,
-  empty_text: "Nothing going on",
-  /* Entity ids or substrings hidden from every source. */
+  /* Superseded by text.empty; still accepted, see setConfig. */
+  empty_text: null,
+  /* Filters every source runs its entities through, on top of its own. See
+   * the filter engine below for the shape; a bare list means entity_globs. */
+  include: [],
   exclude: [],
-  /* Areas hidden from every source, by display name or area id. */
-  exclude_areas: [],
-  animate: true,
+  /* Registry areas that are filing cabinets rather than places, by id or name.
+   * An entity in one of these is shown without a location instead of claiming
+   * to be somewhere called "System". Empty, because which areas those are is
+   * a fact about your registry and not one this card can guess. */
+  non_areas: [],
+  /* Home Assistant conditions every row must satisfy, whichever source found
+   * it. Where include/exclude choose entities, these choose moments - and
+   * numeric_state makes a measurement a first-class thing to watch. */
+  conditions: [],
 
-  sources: {
-    lights: {
-      enabled: true,
-      /* area | entity — one row per room, or one row per lamp. Per-room is the
-       * default because "3 lights on in Bed Room Lynn" is the sentence someone
-       * actually wants; five lamp names is data, not information. */
-      aggregate: "area",
-      /* Rooms whose lights are never worth reporting. Outdoor lighting runs on
-       * schedule and would sit in the list all evening as noise. */
-      exclude_areas: [],
-      exclude: [],
-      /* Below this many minutes a light is assumed to be in active use rather
-       * than forgotten. 0 shows every light the moment it comes on. */
-      min_minutes: 0,
-    },
-    appliances: {
-      enabled: true,
-      /* See APPLIANCE_IDLE: standby is a permanent state for half the plugs in
-       * this house, not an event. */
-      include_standby: false,
-      exclude: [],
-      exclude_areas: [],
-    },
-    climate: {
-      enabled: true,
-      /* The connector between current and target temperature. Swappable
-       * because legibility here depends on the screen it lands on, not on the
-       * card: "→" is thin in some faces at 12px, and a wall tablet is read
-       * from across a room. "»", "▸" or plain "to" all work. */
-      arrow: "→",
-      /* A thermostat that is on but has reached its setpoint. Worth seeing that
-       * the system is engaged, but it is not an event in the same sense. */
-      show_idle: true,
-      exclude: [],
-      exclude_areas: [],
-    },
-    timers: { enabled: true, exclude: [], exclude_areas: [] },
-    media: {
-      enabled: true,
-      /* A paused speaker is not something happening. It was on the list at
-       * first because it is technically "not idle", which is a state machine's
-       * answer to a question nobody asked. */
-      include_paused: false,
-      exclude: [],
-      exclude_areas: [],
-    },
-    house: {
-      enabled: true,
-      /* Covers, vacuums and locks that are not in their resting state. */
-      exclude: [],
-      exclude_areas: [],
-    },
-  },
+  /* What the card watches. Empty, and deliberately: an event is a name, a
+   * filter, when it applies and how its rows read, and every one of those is
+   * yours to decide. There is nothing a card can assume about a house it has
+   * never seen. See the doc block above for the shape.
+   *
+   *     events:
+   *       lights:
+   *         category: lights
+   *         group: area
+   *         include:
+   *           domains: [light]
+   *           floors: [first_floor, second_floor]
+   *         conditions:
+   *           - condition: state
+   *             state: "on"
+   *             for: "00:01:00"
+   *         status:
+   *           one: 1 light on
+   *           many: "{n} lights on"
+   */
+  events: {},
 
-  /* The escape hatch for everything conventions cannot reach: weather
-   * warnings, the alarm panel, a forced ventilation shutdown. No Jinja - just
-   * {state} and {attr.name} interpolation, optionally against another entity
-   * with {attr.name@entity_id}. Anything needing real templating belongs in a
-   * template sensor, where it can be tested. */
-  custom: [],
 };
 
 /* ------------------------------------------------------------------- utils */
@@ -353,12 +640,12 @@ function mergeConfig(base, over) {
     const o = over[k];
     /* An emptied-out key.
      *
-     *     sources:
+     *     events:
      *       lights:
      *
      * is `lights: null` once YAML is done with it, and it means "I deleted
      * what was in here", not "delete the section". Letting the null through
-     * replaced a whole source config with nothing and the next read of
+     * replaced a whole event config with nothing and the next read of
      * `cfg.enabled` took the card down with a TypeError - one blank line in
      * the editor for a blank card on the wall. The defaults stand instead. */
     if (o == null && isPlainObject(b)) {
@@ -377,14 +664,62 @@ function mergeConfig(base, over) {
   return out;
 }
 
-const CUSTOM_KEYS = [
-  "entity", "when", "when_not", "conditions", "title", "detail", "status",
-  "icon", "severity", "group", "time_mode", "show_time",
-];
+/* Home Assistant's own condition vocabulary, not a private one. `state` is the
+ * shape Lovelace card visibility uses; `numeric_state`, `time` and the three
+ * boolean ones are the shapes automations use. Naming them after what core
+ * already calls them means a config read here transfers, and one written here
+ * reads like the rest of the install.
+ *
+ * Keyed by type rather than pooled, so `condition: state` carrying an `above`
+ * is caught as the mistake it is instead of being quietly ignored. */
+const CONDITION_KEYS = {
+  state: ["condition", "entity", "state", "state_not", "for"],
+  numeric_state: ["condition", "entity", "attribute", "above", "below", "for"],
+  time: ["condition", "after", "before", "weekday"],
+  and: ["condition", "conditions"],
+  or: ["condition", "conditions"],
+  not: ["condition", "conditions"],
+};
+const CONDITION_TYPES = Object.keys(CONDITION_KEYS);
 
-const CONDITION_KEYS = ["entity", "state", "state_not", "after", "before", "weekday"];
+/* A state is a string and an attribute can be anything, so this is deliberately
+ * narrow: Number("") is 0, Number(null) is 0, Number([]) is 0 and Number(true)
+ * is 1, and every one of those would make a threshold silently true. Only a
+ * real number or a string that is one counts. */
+function toNumber(raw) {
+  if (typeof raw === "number") return isFinite(raw) ? raw : null;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const n = Number(raw);
+  return isFinite(n) ? n : null;
+}
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/* A duration -> milliseconds, in the three spellings core accepts:
+ * "00:05:00", a mapping of hours/minutes/seconds, or a bare number of seconds.
+ * parseClock below looks similar and is not reusable - it answers "which
+ * minute of the day is this" and drops the seconds, which is right for a
+ * window and wrong for a length. */
+function parseDuration(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return isFinite(value) ? value * 1000 : null;
+  if (isPlainObject(value)) {
+    let ms = 0;
+    for (const [k, mult] of [["hours", 3600], ["minutes", 60], ["seconds", 1]]) {
+      if (value[k] == null) continue;
+      const n = toNumber(value[k]);
+      if (n === null) return null;
+      ms += n * mult * 1000;
+    }
+    return ms;
+  }
+  const m = String(value).trim().match(/^(\d+):([0-5]?\d)(?::([0-5]?\d))?$/);
+  if (!m) {
+    const n = toNumber(value);
+    return n === null ? null : n * 1000;
+  }
+  return ((+m[1] * 60 + +m[2]) * 60 + (+m[3] || 0)) * 1000;
+}
 
 /* "22:30" | "22:30:00" -> minutes since midnight. */
 function parseClock(value) {
@@ -416,8 +751,98 @@ function withinWindow(after, before, now) {
   return t >= a || t < b; // wraps midnight
 }
 
+/* Which Home Assistant condition an untyped block is. The time keys are
+ * unambiguous; anything else is a state test. */
+function conditionKind(cond) {
+  if (cond.conditions != null) return "and";
+  if (cond.above != null || cond.below != null) return "numeric_state";
+  if (cond.after != null || cond.before != null || cond.weekday != null) return "time";
+  return "state";
+}
+
+/* Validation is recursive because and/or/not nest. `where` is carried down so
+ * a bad key three levels in still says which entry it came from. */
+function checkCondition(cond, where) {
+  if (!isPlainObject(cond)) {
+    throw new Error(`home-event-card: every condition in ${where} must be a mapping.`);
+  }
+  const kind = cond.condition || conditionKind(cond);
+  if (CONDITION_TYPES.indexOf(kind) === -1) {
+    throw new Error(
+      `home-event-card: \`condition: ${kind}\` in ${where} is not supported. ` +
+        `Use ${CONDITION_TYPES.join(", ")}.`
+    );
+  }
+  checkKeys(CONDITION_KEYS[kind], cond, `${kind} condition in ${where}`);
+
+  if (kind === "and" || kind === "or" || kind === "not") {
+    if (!Array.isArray(cond.conditions) || !cond.conditions.length) {
+      throw new Error(
+        `home-event-card: \`condition: ${kind}\` in ${where} needs a non-empty ` +
+          "`conditions:` list."
+      );
+    }
+    for (const sub of cond.conditions) checkCondition(sub, where);
+    return;
+  }
+
+  if (kind === "numeric_state" && cond.above == null && cond.below == null) {
+    throw new Error(
+      `home-event-card: a numeric_state condition in ${where} needs \`above\`, ` +
+        "`below`, or both."
+    );
+  }
+  if (kind === "state" && cond.state == null && cond.state_not == null) {
+    throw new Error(
+      `home-event-card: a state condition in ${where} needs \`state\` or ` +
+        "`state_not`."
+    );
+  }
+  if (cond["for"] != null && parseDuration(cond["for"]) === null) {
+    throw new Error(
+      `home-event-card: \`for: ${JSON.stringify(cond["for"])}\` in ${where} is ` +
+        'not a duration. Use "HH:MM:SS", a number of seconds, or ' +
+        "{hours, minutes, seconds}."
+    );
+  }
+  if (kind === "time" && cond.after == null && cond.before == null &&
+      cond.weekday == null) {
+    throw new Error(
+      `home-event-card: a time condition in ${where} needs \`after\`, ` +
+        "`before` or `weekday`."
+    );
+  }
+  for (const k of ["after", "before"]) {
+    if (cond[k] != null && parseClock(cond[k]) === null) {
+      throw new Error(
+        `home-event-card: \`${k}: ${cond[k]}\` in ${where} is not a time. ` +
+          'Use HH:MM or HH:MM:SS, e.g. "20:00".'
+      );
+    }
+  }
+  const days = cond.weekday == null
+    ? []
+    : Array.isArray(cond.weekday) ? cond.weekday : [cond.weekday];
+  for (const d of days) {
+    if (WEEKDAYS.indexOf(String(d).slice(0, 3).toLowerCase()) === -1) {
+      throw new Error(
+        `home-event-card: \`weekday: ${d}\` in ${where} is not a day. ` +
+          `Use ${WEEKDAYS.join(", ")}.`
+      );
+    }
+  }
+}
+
+function checkConditions(list, where) {
+  if (list == null) return;
+  if (!Array.isArray(list)) {
+    throw new Error(`home-event-card: \`conditions\` in ${where} must be a list.`);
+  }
+  for (const cond of list) checkCondition(cond, where);
+}
+
 /* Levenshtein distance, capped at the only use it has here: telling someone
- * that `exclude_area` was probably meant to be `exclude_areas`. A config error
+ * that `entity_glob` was probably meant to be `entity_globs`. A config error
  * that names the likely fix costs one function and saves a round trip. */
 function editDistance(a, b) {
   const m = a.length;
@@ -453,10 +878,90 @@ function checkKeys(allowed, obj, where) {
   }
 }
 
-function stateOf(hass, id) {
-  const st = hass && id ? hass.states[id] : null;
-  if (!st || st.state === "unavailable" || st.state === "unknown") return null;
-  return st;
+/* Merge the user's subset of `text` over the defaults, one level of nesting
+ * deep, reusing checkKeys so a typo is reported with the likely fix rather than
+ * silently rendering the English default. */
+function mergeText(base, given, where) {
+  if (given == null) return { ...base };
+  if (!isPlainObject(given)) {
+    throw new Error(`home-event-card: ${where} must be a mapping.`);
+  }
+  checkKeys(Object.keys(base), given, where);
+  const out = { ...base };
+  for (const key of Object.keys(given)) {
+    const b = base[key];
+    const o = given[key];
+    if (Array.isArray(b)) {
+      out[key] = asList(o);
+    } else if (isPlainObject(b)) {
+      /* A block with nothing under it is emptied out in YAML, not a request
+       * to erase what the card ships. */
+      if (o != null) out[key] = mergeText(b, o, `${where}.${key}`);
+    } else {
+      out[key] = o;
+    }
+  }
+  return out;
+}
+
+/* YAML makes a single value and a list of one look different; the card should
+ * not. Used for the `strip` word lists. */
+function asList(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value.filter((v) => v != null) : [value];
+}
+
+/* The one placeholder the text block supports. Kept to `{n}` deliberately: a
+ * template language here would want escaping, and every string that needs a
+ * value needs exactly one. */
+function fill(template, n) {
+  return String(template == null ? "" : template).replace(/\{n\}/g, n);
+}
+
+/* Turns a config block's include/exclude (and the *_areas shorthands) into the
+ * compiled form the render path uses, in place. */
+function compileFilters(block, where) {
+  if (!isPlainObject(block)) return;
+  block._include = normaliseFilter(block.include, `${where}include`);
+  block._exclude = normaliseFilter(block.exclude, `${where}exclude`);
+  block._needs = needsOf(block._include, block._exclude);
+}
+
+/* Ask Home Assistant for a state's wording before falling back to our own.
+ *
+ * media_player, cover and vacuum states are translated by core into the user's
+ * language, including the ones this card never anticipated. Shipping "Playing"
+ * as a literal would make the card English-only for no gain, so the literal is
+ * only the fallback for a core too old to have the helper. */
+/* An override, else Home Assistant's translation, else the fallback.
+ *
+ * hass.localize returns "" for a key it does not have rather than throwing, so
+ * the truthiness check is the miss path and not an error path. */
+function localized(hass, key, override, fallback) {
+  if (override != null) return override;
+  if (hass && typeof hass.localize === "function") {
+    const s = hass.localize(key);
+    if (s) return s;
+  }
+  return fallback;
+}
+
+/* hvac_action is an attribute and hvac mode is a state, and they live under
+ * different translation keys. The card asks for whichever it is looking at. */
+const CLIMATE_ACTION_KEY =
+  "component.climate.entity_component._.state_attributes.hvac_action.state.";
+const CLIMATE_MODE_KEY = "component.climate.entity_component._.state.";
+
+function stateLabel(hass, stateObj, fallback) {
+  if (hass && typeof hass.formatEntityState === "function") {
+    try {
+      const s = hass.formatEntityState(stateObj);
+      if (s) return s;
+    } catch (err) {
+      /* fall through */
+    }
+  }
+  return fallback != null ? fallback : humanise(stateObj && stateObj.state);
 }
 
 /* Excludes are matched as substrings of the entity id so one entry can name a
@@ -478,17 +983,353 @@ function matchesArea(areaName, list) {
   return list.some((a) => areaSlug(a) === slug);
 }
 
-function matchesAny(entityId, patterns) {
-  if (!patterns || !patterns.length) return false;
-  for (const p of patterns) {
-    if (p && entityId.indexOf(String(p)) !== -1) return true;
+/* ------------------------------------------------------------------ filters
+ *
+ * recorder's two keys, plus the four registry ones a service call targets:
+ *
+ *     exclude:
+ *       domains:      [automation, update]     # recorder
+ *       entity_globs: ["sensor.sun*"]          # recorder
+ *       entities:     [sensor.date]            # target
+ *       devices:      ["Kitchen | Dishwasher"] # target
+ *       areas:        [Garden]                 # target
+ *       floors:       [Second Floor]           # target
+ *       labels:       [Battery]                # target
+ *
+ * Between them that is every way core lets you name a set of things, so
+ * anything selectable in an automation is selectable here. This is also the
+ * only way anything selects entities - the top level and every source read the
+ * same block, so "how do I choose what shows up" has one answer.
+ *
+ * ---------------------------------------------------------------------------
+ * `match: any | all`, and why it is not optional
+ *
+ * Recorder ORs the keys of a filter block, and that is right when they are all
+ * ways of naming an entity directly: "these domains, plus these globs, plus
+ * this one id" is a union and reads as one. Areas, floors, labels and devices
+ * put a second axis in the same block, and
+ *
+ *     include:
+ *       domains: [light]
+ *       floors: [first_floor]
+ *
+ * reads as an intersection to anyone who has ever written a sentence. As a
+ * union it is every light in the house plus everything on that floor - 387
+ * entities here, where 19 were wanted.
+ *
+ * Neither reading is wrong and core uses both: recorder unions its filter
+ * block, while the entity selector intersects the options within one filter
+ * entry and unions the entries. So the block says which it means, and has to
+ * whenever more than one dimension is in play. Defaulting it would be the same
+ * quiet assumption this card has spent its life removing.
+ *
+ * A bare list is shorthand for `entity_globs`, so `exclude: ["light.garden_*"]`
+ * means what it looks like. There is no other shorthand: `exclude_areas` was
+ * one before `areas` existed as a key, and two spellings of one idea is how a
+ * configuration stops being readable.
+ *
+ * Everything but the two recorder keys is matched on a slug of what you wrote
+ * against a slug of both the registry id and the display name, so `floors:
+ * [Second Floor]` and `floors: [second_floor]` are the same instruction, and
+ * a renamed floor keeps working under either spelling. Areas and floors are
+ * separate keys for a reason: this house has an *area* called Ground Floor
+ * sitting on a *floor* called Ground Floor, and they are not the same set.
+ *
+ * Absent on purpose: recorder's `event_types` filters the event bus and this
+ * card only ever looks at states. Categories are not here either - the
+ * frontend's entity collection carries labels but not categories
+ * (config/entity_registry/list_for_display returns `lb` and no counterpart),
+ * and core scopes categories to the automation, script and helper pages rather
+ * than to entities at large, so filtering a dashboard by one would mean
+ * pulling the whole registry down per card to sort things by which folder they
+ * sit in on a config screen. Labels are the entity-level tag, and they are.
+ *
+ * ---------------------------------------------------------------------------
+ * Precedence is a specificity ladder, not recorder's seven-step rule:
+ *
+ *     7  entities        an exact id
+ *     6  entity_globs    a pattern you wrote about ids
+ *     5  devices         one physical thing
+ *     4  labels          a tag you put on it by hand
+ *     3  areas           the room it is in
+ *     2  floors          the storey that room is on
+ *     1  domains         what kind of thing it is
+ *
+ * Narrower beats broader, and exclude wins a tie at the same level. That is
+ * what makes "every switch except the pond pump" work, which is the one thing
+ * recorder's ordering buys that a simple exclude-beats-include does not, and
+ * it extends the obvious way: "the whole second floor except the nursery"
+ * needs areas to outrank floors, and it does. The rest of recorder's
+ * complexity only shows up in corners a dashboard never reaches, and costs a
+ * documentation table to describe.
+ *
+ * If `include` is given at all and nothing in it matched, the entity is out. */
+const FILTER_KEYS = [
+  "domains", "floors", "areas", "labels", "devices", "entities", "entity_globs",
+];
+
+/* The ladder, most specific first, so the walk can stop at the first hit when
+ * the block is a union. Rungs are explicit rather than derived from the array
+ * order: the order above reads as a list of dimensions, and tying precedence
+ * to how it happens to be sorted is a trap for whoever edits it next. */
+const FILTER_RUNGS = [
+  [7, "entities"],
+  [6, "entity_globs"],
+  [5, "devices"],
+  [4, "labels"],
+  [3, "areas"],
+  [2, "floors"],
+  [1, "domains"],
+];
+
+/* Keys of a filter block that are not dimensions. */
+const FILTER_OPTS = ["match"];
+
+/* The keys that need something looked up per entity rather than read off its
+ * id, and therefore have to be paid for only when a config mentions them. */
+const LOOKUP_KEYS = ["floors", "areas", "labels", "devices"];
+
+/* hass carries the entity, device and area registries as collections. These
+ * two it does not, so they are fetched - see _loadRegistry. `devices` needs no
+ * entry here precisely because hass.devices already has the names. */
+const REGISTRY_KINDS = [
+  { key: "labels", ws: "config/label_registry/list", id: "label_id" },
+  { key: "floors", ws: "config/floor_registry/list", id: "floor_id" },
+];
+
+/* Globs, as recorder spells them: * is any run, ? is one character. Anchored,
+ * so `sensor.sun*` does not match `binary_sensor.sunroom`. Compiled once at
+ * setConfig rather than per entity per render - this runs against every state
+ * in the house on every source. */
+function globToRegExp(pattern) {
+  const escaped = String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("^" + escaped.replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+}
+
+function normaliseFilter(spec, where) {
+  let out = null;
+  if (Array.isArray(spec)) {
+    out = { entity_globs: spec.slice() };
+  } else if (isPlainObject(spec)) {
+    checkKeys(FILTER_KEYS.concat(FILTER_OPTS), spec, where);
+    out = {};
+    for (const k of FILTER_KEYS) if (spec[k] != null) out[k] = asList(spec[k]);
+    if (spec.match != null) {
+      if (spec.match !== "any" && spec.match !== "all") {
+        throw new Error(
+          `home-event-card: \`match: ${spec.match}\` in ${where} must be any or all.`
+        );
+      }
+      out._all = spec.match === "all";
+    }
+  } else if (spec != null) {
+    throw new Error(
+      `home-event-card: ${where} must be a list of entity globs, or a mapping ` +
+        `with ${FILTER_KEYS.join(" / ")}.`
+    );
+  }
+  /* An empty list is not a filter. `exclude: []` is what the generated
+   * reference config writes for "nothing excluded here", and left as a live
+   * filter an empty `include: []` would match nothing and therefore hide
+   * every entity in the house. */
+  if (out) {
+    for (const k of FILTER_KEYS) {
+      if (out[k] && !out[k].length) delete out[k];
+    }
+  }
+  if (!out) return null;
+  const dims = FILTER_KEYS.filter((k) => out[k]);
+  if (!dims.length) return null;
+  /* One dimension is one dimension however you combine it, so `match` is only
+   * demanded where it changes the answer. Two of them and there is no honest
+   * default: `domains: [light]` with `floors: [first_floor]` is "lights
+   * upstairs" to one reader and "lights, and also everything upstairs" to
+   * another, and the card cannot tell which of you wrote it. */
+  if (dims.length > 1 && out._all === undefined) {
+    throw new Error(
+      `home-event-card: ${where} names ${dims.join(" and ")}, so it needs ` +
+        "`match: all` (an entity must match every one of them) or " +
+        "`match: any` (any one is enough, as Home Assistant's recorder does)."
+    );
+  }
+  out._all = out._all === true;
+  if (out.entity_globs) out._globs = out.entity_globs.map(globToRegExp);
+  /* Registry ids are slugged names - core slugs "Low battery" into
+   * `low_battery` once at creation and never revisits it - so slugging what
+   * was written makes the id and the name the same answer, which is what
+   * `areas` has always done. The per-entity side is slugged at lookup and
+   * cached; both spellings go in there, so this stays a plain compare. */
+  for (const k of ["labels", "devices", "floors"]) {
+    if (out[k]) out["_" + k] = out[k].map(areaSlug);
+  }
+  return out;
+}
+
+/* Does `list` name anything in this entity's `have` set? Both sides are
+ * already slugs. */
+function hitsAny(list, have) {
+  if (!list || !have || !have.length) return false;
+  return list.some((v) => have.indexOf(v) !== -1);
+}
+
+/* Does this one dimension name this entity? The registry answers are passed in
+ * rather than looked up here, so the walk happens once per entity instead of
+ * once per filter. */
+function matchesDimension(filter, key, entityId, ctx) {
+  switch (key) {
+    case "entities":
+      return filter.entities.indexOf(entityId) !== -1;
+    case "entity_globs":
+      return filter._globs.some((re) => re.test(entityId));
+    case "devices":
+      return hitsAny(filter._devices, ctx.devices);
+    case "labels":
+      return hitsAny(filter._labels, ctx.labels);
+    case "areas":
+      return !!ctx.area && matchesArea(ctx.area, filter.areas);
+    case "floors":
+      return hitsAny(filter._floors, ctx.floors);
+    case "domains":
+      return filter.domains.indexOf(entityId.slice(0, entityId.indexOf("."))) !== -1;
+    default:
+      return false;
+  }
+}
+
+/* A grouped event's wording, resolved for this many rows. `{one, many}` is
+ * the only mapping left in the schema and this is where it collapses, so the
+ * render path downstream never has to know it existed. */
+function plural(cfg, n) {
+  let out = cfg;
+  for (const k of PLURAL_KEYS) {
+    if (!isPlainObject(cfg[k])) continue;
+    if (out === cfg) out = { ...cfg };
+    out[k] = n === 1 ? cfg[k].one : cfg[k].many;
+  }
+  return out;
+}
+
+/* The same wording, for a row that is not a count.
+
+ * `{one, many}` belongs to the group: it exists to say "3 lights on" where a
+ * single row would say "1 light on". A member row is one lamp. Dropping the
+ * key rather than resolving it to `one` lets the domain renderer's own value
+ * stand - which for a light is its own icon and no status at all, the group
+ * row above having already said how many there are.
+ *
+ * A plain string is left alone. That is a per-entity template: `{name}` and
+ * `{area}` interpolate against the member, which is exactly right. */
+function singular(cfg) {
+  let out = cfg;
+  for (const k of PLURAL_KEYS) {
+    if (!isPlainObject(cfg[k])) continue;
+    if (out === cfg) out = { ...cfg };
+    delete out[k];
+  }
+  return out;
+}
+
+/* Does any condition here name this state outright? Only a positive `state:`
+ * counts - `state_not: [unavailable]` mentions it in order to reject it.
+ *
+ * This exists for exactly one rule: unavailable and unknown are hidden unless
+ * you asked for them. Making that a condition everyone writes would be two
+ * lines of boilerplate on every event in every config. */
+function namesState(conditions, value) {
+  if (!conditions) return false;
+  for (const c of conditions) {
+    if (!isPlainObject(c)) continue;
+    if (Array.isArray(c.conditions) && namesState(c.conditions, value)) return true;
+    if (c.state == null) continue;
+    if (asList(c.state).map(String).indexOf(value) !== -1) return true;
   }
   return false;
+}
+
+/* How specifically this filter matches, 0 for not at all.
+ *
+ * `match: all` has to check every dimension before it can answer, and then
+ * takes the most specific one that hit - an intersection is at least as
+ * precise as its sharpest term, which is what keeps `domains + entities`
+ * outranking a bare domain exclude. `match: any` stops at the first hit,
+ * because the walk runs most-specific-first and nothing below can beat it. */
+function filterLevel(filter, entityId, ctx) {
+  if (!filter) return 0;
+  let best = 0;
+  for (const [rung, key] of FILTER_RUNGS) {
+    if (!filter[key]) continue;
+    if (matchesDimension(filter, key, entityId, ctx)) {
+      if (!filter._all) return rung;
+      if (rung > best) best = rung;
+    } else if (filter._all) {
+      return 0;
+    }
+  }
+  return best;
+}
+
+function passesFilter(include, exclude, entityId, ctx) {
+  const inc = filterLevel(include, entityId, ctx);
+  const exc = filterLevel(exclude, entityId, ctx);
+  if (exc && exc >= inc) return false; // exclude wins ties
+  if (include && !inc) return false; // an include was given and missed
+  return true;
+}
+
+/* Which per-entity lookups this block's filters actually ask for. None of them
+ * is free and most configs never mention any, so each one is paid for only
+ * where it was written. */
+function needsOf(include, exclude) {
+  const out = {};
+  for (const k of LOOKUP_KEYS) {
+    out[k] = !!((include && include[k] && include[k].length) ||
+                (exclude && exclude[k] && exclude[k].length));
+  }
+  return out;
+}
+
+const NO_NEEDS = needsOf(null, null);
+
+/* Which domains a source could possibly reach, or null for "cannot tell, walk
+ * the house". The candidate index buckets by domain because walking every
+ * state per source per render is the thing it exists to avoid, and an include
+ * that names domains, entity ids, or globs with a literal domain pins that
+ * bucket. Areas, floors, devices and labels all cut across domains and cannot
+ * pin anything, so they fall back to everything - correct, just not free. */
+function candidateDomains(filter) {
+  if (!filter) return null;
+  /* An intersection can never reach outside its narrowest term, so a `match:
+   * all` block that names domains pins the bucket whatever else it says. */
+  if (filter._all && filter.domains) return filter.domains.slice();
+  for (const k of LOOKUP_KEYS) if (filter[k]) return null;
+  const out = [];
+  const add = (d) => {
+    if (out.indexOf(d) === -1) out.push(d);
+  };
+  if (filter.domains) for (const d of filter.domains) add(String(d));
+  if (filter.entities) {
+    for (const id of filter.entities) {
+      const dot = String(id).indexOf(".");
+      if (dot < 1) return null;
+      add(String(id).slice(0, dot));
+    }
+  }
+  if (filter.entity_globs) {
+    for (const g of filter.entity_globs) {
+      const dot = String(g).indexOf(".");
+      const head = dot < 1 ? "" : String(g).slice(0, dot);
+      if (!head || /[*?]/.test(head)) return null;
+      add(head);
+    }
+  }
+  return out.length ? out : null;
 }
 
 /* Friendly names here read "Kitchen | Dishwasher | State". The area is the
  * first segment and the trailing domain word is noise once the row sits under
  * a group heading, so both are stripped and what remains is the device. */
+const SEPARATOR = " \u00b7 ";
+
 function splitName(friendly, entityId) {
   const raw = String(friendly || entityId || "");
   const parts = raw
@@ -497,7 +1338,7 @@ function splitName(friendly, entityId) {
     .filter(Boolean);
   if (!parts.length) return { area: null, name: entityId };
   if (parts.length === 1) return { area: null, name: parts[0] };
-  return { area: parts[0], name: parts.slice(1).join(" · ") };
+  return { area: parts[0], name: parts.slice(1).join(SEPARATOR) };
 }
 
 /* Names here stack qualifiers - "Heating | Thermostat | Room" - so a single
@@ -519,40 +1360,50 @@ function stripSuffix(name, words) {
 
 /* Durations are read at a glance from across a room, so precision is spent
  * where it changes a decision: minutes below an hour, hours and minutes below a
- * day, days above that. Seconds never appear - they only add flicker. */
-function fmtDur(ms) {
+ * day, days above that. Seconds never appear - they only add flicker.
+ *
+ * `t` is the resolved text.time block. Both units of a compound are filled
+ * separately so a translation can put them in its own order. */
+function fmtDur(ms, t) {
   const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return "just now";
+  if (s < 60) return t.just_now;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return fill(t.minute, m);
   const h = Math.floor(m / 60);
   const rm = m % 60;
-  if (h < 24) return rm ? `${h}h ${rm}m` : `${h}h`;
+  if (h < 24) return rm ? `${fill(t.hour, h)} ${fill(t.minute, rm)}` : fill(t.hour, h);
   const d = Math.floor(h / 24);
   const rh = h % 24;
-  return rh ? `${d}d ${rh}h` : `${d}d`;
+  return rh ? `${fill(t.day, d)} ${fill(t.hour, rh)}` : fill(t.day, d);
 }
 
 /* mode: since (elapsed) | until (countdown) | ago (elapsed, past-tense)
+ *     | remaining (countdown, stated as what is left)
  *
- * Each mode carries its own preposition, because a bare "1h 12m" does not say
- * which way it points. "For 1h 12m" is a thing still running, "12m ago" is a
- * thing that finished, "in 6m" is a thing that has not started. The word is
- * doing real work - without it the washer and the dishwasher read identically
- * and mean opposite things. */
-function fmtRelative(at, mode, now) {
+ * Each mode carries its own wording, because a bare "1h 12m" does not say which
+ * way it points. "For 1h 12m" is a thing still running, "12m ago" is a thing
+ * that finished, "in 6m" is a thing that has not started, "28m remaining" is a
+ * timer running down. The word is doing real work - without it the washer and
+ * the dishwasher read identically and mean opposite things.
+ *
+ * `until` and `remaining` measure the same interval and differ only in how they
+ * say it. A timer someone set is better read as what is left of it than as when
+ * it will end. */
+function fmtRelative(at, mode, now, t) {
   if (!at) return "";
-  const delta = mode === "until" ? at - now : now - at;
-  if (mode === "until") {
+  const counting = mode === "until" || mode === "remaining";
+  const delta = counting ? at - now : now - at;
+  if (counting) {
     /* "in just now" is nonsense, and a countdown that has run out but whose
      * entity has not caught up yet should not go negative. */
-    return delta < 60000 ? "any moment" : "in " + fmtDur(delta);
+    if (delta < 60000) return t.any_moment;
+    return fill(mode === "remaining" ? t.remaining : t.in, fmtDur(delta, t));
   }
-  const d = fmtDur(delta);
-  if (mode === "ago") return d === "just now" ? d : d + " ago";
+  const d = fmtDur(delta, t);
+  if (mode === "ago") return d === t.just_now ? d : fill(t.ago, d);
   /* "For just now" does not parse; something under a minute old has just
    * started, which is what the row should say. */
-  return d === "just now" ? "Just started" : "For " + d;
+  return d === t.just_now ? t.just_started : fill(t.for, d);
 }
 
 /* Home Assistant hands out three different time formats and getting them
@@ -611,14 +1462,14 @@ function temp(v) {
  *   sub       where or what about  ("Kitchen", "25.5° → 18.0°")
  *   status    the state word       ("Active", "Cooling")
  *   at        epoch ms for the time column
- *   mode      since | until | ago
+ *   mode      since | until | ago | remaining
  *   entity    what a tap opens
  *   tone      optional colour override for climate's cool blue
  */
 function ev(o) {
   return {
     key: o.key,
-    group: o.group,
+    category: o.category,
     severity: o.severity || "info",
     icon: o.icon || "mdi:information-outline",
     title: o.title || "",
@@ -629,6 +1480,7 @@ function ev(o) {
     entity: o.entity || "",
     tone: o.tone || null,
     area: o.area || null,
+    members: o.members || null,
   };
 }
 
@@ -641,14 +1493,20 @@ class HomeEventCard extends HTMLElement {
     this._idx = null;
     this._idxKey = null;
     this._timer = null;
-    this._prevKeys = null;
+    /* Which grouped rows are open and which sections are folded. Deliberately
+     * not persisted: it is a reading position, not a preference, and a wall
+     * tablet that came back from a reload still folded would be a card that
+     * had quietly hidden something. */
+    this._open = new Set();
+    this._folded = new Set();
     this._onClick = (e) => this._handleClick(e);
     this._onKey = (e) => this._handleKey(e);
     this._onVisibility = () => this._applyVisibility();
   }
 
   setConfig(config) {
-    const cfg = mergeConfig(DEFAULTS, config || {});
+    const given = config || {};
+    const cfg = mergeConfig(DEFAULTS, given);
 
     const valid = ["category", "area", "severity", "none"];
     if (valid.indexOf(cfg.group_by) === -1) {
@@ -657,57 +1515,32 @@ class HomeEventCard extends HTMLElement {
           `Valid values are ${valid.join(", ")}.`
       );
     }
-    if (cfg.compact !== "auto" && typeof cfg.compact !== "boolean") {
-      throw new Error(
-        `home-event-card: \`compact\` must be true, false or "auto", got ${JSON.stringify(cfg.compact)}.`
-      );
-    }
     if (["recent", "duration", "name"].indexOf(cfg.sort) === -1) {
       throw new Error(
         `home-event-card: unknown sort "${cfg.sort}". Valid values are recent, duration, name.`
       );
     }
-    cfg.custom = Array.isArray(cfg.custom) ? cfg.custom : [];
-    for (const c of cfg.custom) {
-      if (!c || !c.entity) {
-        throw new Error("home-event-card: every entry under `custom` needs an `entity`.");
-      }
-      checkKeys(CUSTOM_KEYS, c, `custom entry for ${c.entity}`);
-      if (c.conditions && !Array.isArray(c.conditions)) {
+    if (!isPlainObject(cfg.events)) cfg.events = {};
+    /* Sections, in render order, with their headings. An id an event names
+     * that is not in here is not an error - it is a section you have not got
+     * round to labelling, so it is created and appended. The list arranges
+     * sections; it does not register them. */
+    if (!Array.isArray(cfg.categories)) {
+      throw new Error("home-event-card: `categories` must be a list of {id, label}.");
+    }
+    const catIds = [];
+    for (const c of cfg.categories) {
+      if (!isPlainObject(c) || !c.id) {
         throw new Error(
-          `home-event-card: \`conditions\` on ${c.entity} must be a list.`
+          "home-event-card: every entry under `categories` needs an `id`, " +
+            "e.g. `- id: appliances` with `label: Appliances`."
         );
       }
-      for (const cond of c.conditions || []) {
-        if (!cond || (!cond.entity && cond.after == null && cond.before == null &&
-                      cond.weekday == null)) {
-          throw new Error(
-            `home-event-card: every condition on ${c.entity} needs an \`entity\`, ` +
-              `or a time window (\`after\` / \`before\`), or a \`weekday\`.`
-          );
-        }
-        checkKeys(CONDITION_KEYS, cond, `condition on ${c.entity}`);
-        for (const k of ["after", "before"]) {
-          if (cond[k] != null && parseClock(cond[k]) === null) {
-            throw new Error(
-              `home-event-card: \`${k}: ${cond[k]}\` on ${c.entity} is not a time. ` +
-                `Use HH:MM or HH:MM:SS, e.g. "20:00".`
-            );
-          }
-        }
-        for (const d of cond.weekday == null
-          ? []
-          : Array.isArray(cond.weekday)
-          ? cond.weekday
-          : [cond.weekday]) {
-          if (WEEKDAYS.indexOf(String(d).slice(0, 3).toLowerCase()) === -1) {
-            throw new Error(
-              `home-event-card: \`weekday: ${d}\` on ${c.entity} is not a day. ` +
-                `Use ${WEEKDAYS.join(", ")}.`
-            );
-          }
-        }
+      checkKeys(["id", "label"], c, `category "${c.id}"`);
+      if (catIds.indexOf(c.id) !== -1) {
+        throw new Error(`home-event-card: duplicate category id "${c.id}".`);
       }
+      catIds.push(c.id);
     }
 
     /* Unknown keys throw rather than being ignored.
@@ -716,16 +1549,138 @@ class HomeEventCard extends HTMLElement {
      * perfectly reasonable guess that silently did nothing, and a filter that
      * silently does nothing is worse than one that does not exist - you go
      * looking for the bug in the wrong place. Strictness is limited to the
-     * `sources` and `custom` blocks, which are entirely this card's namespace;
-     * the top level is shared with Lovelace and stays lenient. */
-    checkKeys(Object.keys(DEFAULTS.sources), cfg.sources, "sources");
-    for (const name of Object.keys(DEFAULTS.sources)) {
-      /* Belt and braces behind mergeConfig's null handling: every source must
-       * be an object by the time a source function reads it, whatever shape
-       * the YAML arrived in. A broken config should raise a config error, never
-       * a TypeError from inside a render. */
-      if (!isPlainObject(cfg.sources[name])) cfg.sources[name] = DEFAULTS.sources[name];
-      checkKeys(Object.keys(DEFAULTS.sources[name]), cfg.sources[name], `sources.${name}`);
+     * `events` block, which is entirely this card's namespace;
+     * the top level is shared with Lovelace and stays lenient.
+     *
+     * Source *names* are the exception: every one is yours, so an unknown name
+     * is a new source rather than a typo. What catches a mistyped one is that
+     * a source without an `include` is an error. */
+    /* Copied first, and never touched in place. What arrives here is
+     * Lovelace's own configuration object - the one it keeps, shares between
+     * renders and hands back to setConfig on the next rebuild. Compiling the
+     * filters into it wrote `_include` onto that object, and the second
+     * setConfig then found a key the schema has never heard of and threw: a
+     * card that rendered a moment ago became a configuration error, and no
+     * amount of refreshing helped because the first render caused it. */
+    const events = {};
+    for (const name of Object.keys(cfg.events)) {
+      const raw = cfg.events[name];
+      if (!isPlainObject(raw)) {
+        throw new Error(
+          `home-event-card: events.${name} must be a mapping with at least an ` +
+            "`include:` saying what it covers."
+        );
+      }
+      /* Underscore keys are this card's own, left behind by a build that did
+       * write in place. Dropped rather than rejected, so a config that has
+       * already been scribbled on comes back to life instead of needing to be
+       * retyped. */
+      const e = {};
+      for (const k of Object.keys(raw)) if (k.charAt(0) !== "_") e[k] = raw[k];
+      events[name] = e;
+      checkKeys(EVENT_KEYS, e, `events.${name}`);
+
+      /* One word, not a mapping. A device that reads two ways in two states is
+       * two events with different conditions - which is what a state mapping
+       * was always describing, only without saying where the line was. */
+      for (const [key, allowed] of [["severity", SEVERITIES], ["time_mode", TIME_MODES]]) {
+        if (e[key] == null) continue;
+        if (typeof e[key] !== "string" || allowed.indexOf(e[key]) === -1) {
+          throw new Error(
+            `home-event-card: \`${key}\` on events.${name} must be one of ` +
+              `${allowed.join(", ")}. For two values, write two events with ` +
+              "`conditions` that tell them apart."
+          );
+        }
+      }
+      if (e.group !== undefined && GROUP_MODES.indexOf(e.group) === -1) {
+        throw new Error(
+          `home-event-card: \`group: ${JSON.stringify(e.group)}\` on events.${name} ` +
+            "must be area (one row per room), all (one row for the lot), or " +
+            "false. `true` is the old spelling of area."
+        );
+      }
+      for (const [key, want] of [["show_time", "boolean"], ["enabled", "boolean"]]) {
+        if (e[key] !== undefined && typeof e[key] !== want) {
+          throw new Error(
+            `home-event-card: \`${key}\` on events.${name} must be true or false. ` +
+              `Got ${JSON.stringify(e[key])}.`
+          );
+        }
+      }
+      /* A grouped row counts, so it needs two wordings. Ungrouped, there is
+       * nothing to count and a mapping is a mistake worth naming. */
+      for (const key of PLURAL_KEYS) {
+        if (!isPlainObject(e[key])) continue;
+        if (!groupMode(e)) {
+          throw new Error(
+            `home-event-card: \`${key}\` on events.${name} may only be a ` +
+              "`one`/`many` mapping when the event groups - without grouping " +
+              "there is nothing to count."
+          );
+        }
+        checkKeys(["one", "many"], e[key], `${key} on events.${name}`);
+      }
+      checkConditions(e.conditions, `events.${name}`);
+    }
+    cfg.events = events;
+
+    checkConditions(cfg.conditions, "the top level");
+
+    /* Filters are compiled once here rather than on every render: this runs
+     * against every state in the house, per event, several times a second. */
+    compileFilters(cfg, "");
+    for (const name of Object.keys(cfg.events)) {
+      compileFilters(cfg.events[name], `events.${name}.`);
+    }
+    /* Two registries hass does not hand out as collections. Only fetched when
+     * a filter mentions them, which most configs never will. */
+    cfg._wantRegistries = {};
+    for (const k of ["labels", "floors"]) {
+      cfg._wantRegistries[k] = cfg._needs[k] ||
+        Object.keys(cfg.events).some((n) => cfg.events[n]._needs[k]);
+    }
+
+    /* Events resolved once. _index runs this lookup per entity in the house,
+     * so it has to be a map rather than a scan. An event whose include cannot
+     * be pinned to domains goes in _eventsAll and is offered every entity; its
+     * filter still decides, this only chooses how wide the candidate list
+     * starts. */
+    cfg._events = [];
+    cfg._eventsByDomain = {};
+    cfg._eventsAll = [];
+    for (const name of Object.keys(cfg.events)) {
+      const e = cfg.events[name];
+      /* An include that selects nothing would select everything, which is
+       * never what anybody wrote - and without one an event is a heading with
+       * no way of knowing what belongs under it. */
+      if (!e._include) {
+        throw new Error(
+          `home-event-card: events.${name} needs an \`include:\` saying what it ` +
+            "covers - a domain, a glob, an entity, a device, an area, a floor " +
+            "or a label."
+        );
+      }
+      cfg._events.push([name, e]);
+      const domains = candidateDomains(e._include);
+      if (!domains) {
+        cfg._eventsAll.push(name);
+        continue;
+      }
+      for (const d of domains) {
+        (cfg._eventsByDomain[d] = cfg._eventsByDomain[d] || []).push(name);
+      }
+    }
+
+    /* Areas that are filing cabinets, slugged once so the render path is a
+     * lookup rather than a scan. */
+    cfg._nonAreas = new Set(asList(cfg.non_areas).map(areaSlug));
+
+    cfg.text = mergeText(DEFAULT_TEXT, given.text, "text");
+    /* `empty_text` predates the text block. Honoured so an existing dashboard
+     * keeps working; `text.empty` wins if somebody has written both. */
+    if (cfg.empty_text != null && !(given.text && given.text.empty != null)) {
+      cfg.text.empty = cfg.empty_text;
     }
 
     this._config = cfg;
@@ -736,8 +1691,137 @@ class HomeEventCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
+    this._loadRegistries();
     if (!this._built) this._build();
     this._render();
+  }
+
+  /* id -> entry for the two registries hass does not hand out as collections,
+   * so `labels:` and `floors:` can be written the way they read in the UI as
+   * well as the way they are stored.
+   *
+   * The two spellings diverge the moment anyone renames something: core slugs
+   * the name into an id at creation and leaves the id alone forever after, so
+   * this house has a label displayed as "HVAC" whose id is `heating`, and
+   * three more besides. Matching ids only would mean `labels: [HVAC]` quietly
+   * returning nothing, which is the failure this card's strictness exists to
+   * prevent everywhere else.
+   *
+   * Asked for once, and only when a filter actually mentions one. The answer
+   * arrives after a render or two; dropping the lookup cache and the render
+   * signature is what makes the next tick pick it up. */
+  _loadRegistries() {
+    const want = this._config._wantRegistries;
+    for (const kind of REGISTRY_KINDS) {
+      if (!want[kind.key]) continue;
+      this._loadRegistry(kind);
+    }
+  }
+
+  _loadRegistry(kind) {
+    this._reg = this._reg || {};
+    this._regPending = this._regPending || {};
+    if (this._reg[kind.key] || this._regPending[kind.key]) return;
+    const hass = this._hass;
+    /* A newer core may already carry it as a collection, in which case there
+     * is nothing to ask for. */
+    if (hass[kind.key] && typeof hass[kind.key] === "object") {
+      this._reg[kind.key] = hass[kind.key];
+      return;
+    }
+    if (typeof hass.callWS !== "function") {
+      this._reg[kind.key] = {}; // nothing to ask; ids still work
+      return;
+    }
+    this._regPending[kind.key] = true;
+    hass
+      .callWS({ type: kind.ws })
+      .then((list) => {
+        const map = {};
+        for (const row of list || []) map[row[kind.id]] = row;
+        this._reg[kind.key] = map;
+        this._lookupCache = null;
+        this._sig = null;
+      })
+      .catch(() => {
+        this._reg[kind.key] = {}; // a core without it; ids still work
+      })
+      .then(() => {
+        this._regPending[kind.key] = false;
+      });
+  }
+
+  /* Both spellings of every registry name that reaches this entity, as slugs,
+   * so the filter side stays a plain compare and the ladder does not need to
+   * know that things have an id and a name.
+   *
+   *   labels    its own, its device's and its area's - the expansion a service
+   *             target does, and not optional: labels are usually applied to
+   *             devices, so reading only the entity's own would miss most of
+   *             them
+   *   devices   the device it belongs to, by id and by name
+   *   floors    the floor its area is on. Only ever from the registry: an area
+   *             guessed out of a friendly name is not a room core knows about
+   *             and cannot be on a storey
+   *
+   * One walk, three answers, cached per entity id - this runs against every
+   * state in the house on every source. Invalidated with the candidate index,
+   * and again when a registry lands. */
+  _lookups(entityId) {
+    if (this._lookupCache && this._lookupCache.has(entityId)) {
+      return this._lookupCache.get(entityId);
+    }
+    if (!this._lookupCache) this._lookupCache = new Map();
+    const hass = this._hass;
+    const reg = this._reg || {};
+    const out = { labels: [], devices: [], floors: [] };
+    const push = (list, v) => {
+      const slug = areaSlug(v);
+      if (slug && list.indexOf(slug) === -1) list.push(slug);
+    };
+    /* An id and the name it was slugged from, both. */
+    const pushBoth = (list, id, entry) => {
+      push(list, id);
+      if (entry && entry.name) push(list, entry.name);
+    };
+    const addLabels = (ids) => {
+      if (!Array.isArray(ids)) return;
+      for (const id of ids) pushBoth(out.labels, id, reg.labels && reg.labels[id]);
+    };
+
+    const ent = hass.entities && hass.entities[entityId];
+    addLabels(ent && ent.labels);
+    let areaId = ent && ent.area_id;
+    if (ent && ent.device_id && hass.devices) {
+      const dev = hass.devices[ent.device_id];
+      push(out.devices, ent.device_id);
+      if (dev) {
+        addLabels(dev.labels);
+        push(out.devices, dev.name_by_user || dev.name);
+        if (!areaId) areaId = dev.area_id;
+      }
+    }
+    const area = areaId && hass.areas ? hass.areas[areaId] : null;
+    if (area) {
+      addLabels(area.labels);
+      if (area.floor_id) {
+        pushBoth(out.floors, area.floor_id, reg.floors && reg.floors[area.floor_id]);
+      }
+    }
+    this._lookupCache.set(entityId, out);
+    return out;
+  }
+
+  _labels(entityId) {
+    return this._lookups(entityId).labels;
+  }
+
+  _deviceKeys(entityId) {
+    return this._lookups(entityId).devices;
+  }
+
+  _floorKeys(entityId) {
+    return this._lookups(entityId).floors;
   }
 
   getCardSize() {
@@ -784,21 +1868,57 @@ class HomeEventCard extends HTMLElement {
   _build() {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="root"></div>`;
     this._root = this.shadowRoot.querySelector(".root");
-    if (!this._config.animate) this._root.classList.add("no-anim");
     this._root.addEventListener("click", this._onClick);
     this._root.addEventListener("keydown", this._onKey);
     this._built = true;
   }
 
   _handleClick(e) {
+    if (this._toggled(e)) return;
     const el = this._targetOf(e);
     if (el && el.dataset.entity) this._fireMoreInfo(el.dataset.entity);
+  }
+
+  /* A grouped row opens rather than firing more-info, and a section heading
+   * folds. Both return true so the caller stops - the heading and the row are
+   * ancestors of things that would otherwise be treated as entities. */
+  _toggled(e) {
+    const path = e.composedPath();
+    const sec = path.find((n) => n && n.dataset && n.dataset.secToggle);
+    if (sec) {
+      const id = sec.dataset.secToggle;
+      if (this._folded.has(id)) this._folded.delete(id);
+      else this._folded.add(id);
+      this._repaint();
+      return true;
+    }
+    const row = path.find((n) => n && n.dataset && n.dataset.group);
+    if (row) {
+      const key = row.dataset.group;
+      if (this._open.has(key)) this._open.delete(key);
+      else this._open.add(key);
+      this._repaint();
+      return true;
+    }
+    return false;
+  }
+
+  /* The signature exists to stop the DOM being rebuilt for nothing. A fold is
+   * the one change that comes from the person rather than from the house, so
+   * it has to say "yes, actually" once. */
+  _repaint() {
+    this._sig = null;
+    this._render();
   }
 
   /* Rows carry tabindex and role="button", which would be a lie without a
    * keyboard path to the same action. */
   _handleKey(e) {
     if (e.key !== "Enter" && e.key !== " ") return;
+    if (this._toggled(e)) {
+      e.preventDefault();
+      return;
+    }
     const el = this._targetOf(e);
     if (!el || !el.dataset.entity) return;
     e.preventDefault();
@@ -821,7 +1941,14 @@ class HomeEventCard extends HTMLElement {
    * Assistant itself would give. The friendly-name prefix is a fallback for
    * entities with no device and no area assignment - which in this house still
    * carry their room in the name. */
-  _areaName(entityId, stateObj) {
+  /* The registry's answer only, or null. Separate from _areaName because the
+   * two are not interchangeable: the registry knows a device's room, while the
+   * name convention only guesses one from the first segment of a friendly
+   * name. That guess is right for `Kitchen | Dishwasher` and wrong for
+   * `Alarm | Master`, where the first segment is not a room at all - so a
+   * caller that needs to know whether an entity is really *somewhere* has to
+   * be able to ask without the guess mixed in. */
+  _registryArea(entityId) {
     const hass = this._hass;
     const entReg = hass.entities && hass.entities[entityId];
     let areaId = entReg && entReg.area_id;
@@ -829,10 +1956,18 @@ class HomeEventCard extends HTMLElement {
       const dev = hass.devices[entReg.device_id];
       areaId = dev && dev.area_id;
     }
-    /* "Other" and "System" are filing cabinets, not rooms. Printing them as a
-     * location would be worse than printing nothing. */
-    if (areaId && NON_AREAS.has(areaId)) areaId = null;
+    /* A filing cabinet is not a room, and printing one as a location is worse
+     * than printing nothing. Which areas those are is `non_areas`, because it
+     * is a fact about your registry - this card used to assume "other" and
+     * "system", which is one installation's habit. */
+    if (areaId && this._config._nonAreas.has(areaSlug(areaId))) areaId = null;
     if (areaId && hass.areas && hass.areas[areaId]) return hass.areas[areaId].name;
+    return null;
+  }
+
+  _areaName(entityId, stateObj) {
+    const known = this._registryArea(entityId);
+    if (known) return known;
     const attrs = (stateObj && stateObj.attributes) || {};
     return splitName(attrs.friendly_name, entityId).area;
   }
@@ -845,536 +1980,501 @@ class HomeEventCard extends HTMLElement {
     const hass = this._hass;
     const key = Object.keys(hass.states).length;
     if (this._idx && this._idxKey === key) return this._idx;
+    const byDomain = this._config._eventsByDomain;
+    const all = this._config._eventsAll;
 
-    const idx = {
-      lights: [],
-      appliances: [],
-      climate: [],
-      timers: [],
-      media: [],
-      covers: [],
-      vacuums: [],
-    };
+    const idx = {};
+    for (const [name] of this._config._events) idx[name] = [];
 
     for (const id in hass.states) {
-      const dot = id.indexOf(".");
-      const domain = id.slice(0, dot);
-      switch (domain) {
-        case "light":
-          if (!matchesAny(id, LIGHT_EXCLUDE)) idx.lights.push(id);
-          break;
-        case "climate":
-          idx.climate.push(id);
-          break;
-        case "timer":
-          if (!matchesAny(id, TIMER_EXCLUDE)) idx.timers.push(id);
-          break;
-        case "media_player":
-          idx.media.push(id);
-          break;
-        case "cover":
-          idx.covers.push(id);
-          break;
-        case "vacuum":
-          idx.vacuums.push(id);
-          break;
-        case "sensor":
-          if (id.endsWith("_state") && !matchesAny(id, STATE_SENSOR_EXCLUDE)) {
-            idx.appliances.push(id);
-          }
-          break;
-        default:
-          break;
-      }
+      const domain = id.slice(0, id.indexOf("."));
+      const wanted = byDomain[domain];
+      if (wanted) for (const name of wanted) idx[name].push(id);
+      for (const name of all) idx[name].push(id);
     }
-
-    /* A `_trv` entity is the valve underneath a room thermostat and reports its
-     * own setpoint; showing both puts the same radiator on the list twice with
-     * different numbers. The sibling is not always an exact stem match -
-     * climate.ground_floor_heating_thermostat_trv pairs with
-     * ...thermostat_room, not ...thermostat - so the test is whether any other
-     * climate entity shares the stem, not whether the bare stem exists. */
-    idx.climate = idx.climate.filter((id) => {
-      if (!id.endsWith("_trv")) return true;
-      const stem = id.slice(0, -4);
-      return !idx.climate.some((other) => other !== id && other.startsWith(stem));
-    });
-
-    /* Light group helpers expose their members in `attributes.entity_id`.
-     * Detecting them from state is more reliable than the `_group` naming
-     * convention alone, and it catches groups added by the UI helper editor. */
-    idx.lights = idx.lights.filter((id) => {
-      const st = hass.states[id];
-      return !(st && st.attributes && Array.isArray(st.attributes.entity_id));
-    });
 
     this._idx = idx;
     this._idxKey = key;
+    this._lookupCache = null;
     return idx;
   }
 
-  /* --------------------------------------------------------------- sources */
+  /* ---------------------------------------------------------------- events */
 
-  /* The one gate every source runs an entity through, so "how do I hide this?"
-   * has the same answer everywhere instead of depending on which source found
-   * it. Four filters, applied in this order:
-   *
-   *   1. exclude            (global)  entity id substring
-   *   2. sources.X.exclude            entity id substring
-   *   3. exclude_areas      (global)  area name or id, exact
-   *   4. sources.X.exclude_areas      area name or id, exact
-   *
-   * Entity ids match on substring because one entry should be able to name a
-   * device (kitchen_fridge), a family (_nightstands) or a room (kitchen_).
-   * Areas match exactly, because a substring rule would let "Bed Room Noud"
-   * silently take out "Bed Room Noud" and nothing else while an entry meaning
-   * "Bed Room" took out three rooms nobody intended. */
+  /* The one gate every event runs an entity through, so "why is this not
+   * showing?" has the same answer everywhere instead of depending on which
+   * event found it. Four things must pass: the top-level include/exclude, the
+   * event's own, the top-level conditions and the event's own. Filters are
+   * two separate ladders rather than one merged block, so an event can include
+   * something the top level is quiet about without also overriding a
+   * top-level exclusion. */
   _excluded(entityId, sourceCfg, stateObj) {
     const cfg = this._config;
-    if (matchesAny(entityId, cfg.exclude)) return true;
-    if (matchesAny(entityId, (sourceCfg && sourceCfg.exclude) || [])) return true;
-
-    const globalAreas = cfg.exclude_areas || [];
-    const sourceAreas = (sourceCfg && sourceCfg.exclude_areas) || [];
-    if (!globalAreas.length && !sourceAreas.length) return false;
-
-    const area = this._areaName(entityId, stateObj || this._hass.states[entityId]);
-    if (!area) return false;
-    return matchesArea(area, globalAreas) || matchesArea(area, sourceAreas);
+    const src = sourceCfg || {};
+    const need = cfg._needs;
+    const sneed = src._needs || NO_NEEDS;
+    const ctx = { area: null, labels: null, devices: null, floors: null };
+    if (need.areas || sneed.areas) {
+      ctx.area = this._areaName(entityId, stateObj || this._hass.states[entityId]);
+    }
+    if (need.labels || sneed.labels) ctx.labels = this._labels(entityId);
+    if (need.devices || sneed.devices) ctx.devices = this._deviceKeys(entityId);
+    if (need.floors || sneed.floors) ctx.floors = this._floorKeys(entityId);
+    if (!passesFilter(cfg._include, cfg._exclude, entityId, ctx)) return true;
+    if (!passesFilter(src._include, src._exclude, entityId, ctx)) return true;
+    /* include/exclude say which entities; conditions say when. Both live on
+     * the top level and on every source, and both are evaluated here so the
+     * answer does not depend on which source found the entity. */
+    if (!this._conditionsMet(cfg.conditions, entityId)) return true;
+    if (!this._conditionsMet(src.conditions, entityId)) return true;
+    return false;
   }
 
-  _lights(out) {
-    const cfg = this._config.sources.lights;
-    if (!cfg.enabled) return;
+  /* One event: walk its candidates, drop what its filters and conditions
+   * reject, and hand each survivor to the renderer for its domain.
+   *
+   * A grouped event collects instead of rendering one at a time - it cannot say
+   * "3 lights on" until it has seen all three. */
+  _event(out, name, cfg) {
+    if (cfg.enabled === false) return;
     const hass = this._hass;
-    const now = Date.now();
-    const floor = (cfg.min_minutes || 0) * 60000;
-    const byArea = new Map();
+    const grouped = [];
 
-    for (const id of this._index().lights) {
+    for (const id of this._index()[name] || []) {
       const st = hass.states[id];
+      if (!st) continue;
       if (this._excluded(id, cfg, st)) continue;
-      if (!st || st.state !== "on") continue;
-      const at = Date.parse(st.last_changed);
-      if (floor && now - at < floor) continue;
-
-      const area = this._areaName(id, st) || "Elsewhere";
-
-      if (cfg.aggregate === "entity") {
-        const { name } = splitName(st.attributes.friendly_name, id);
-        out.push(
-          ev({
-            key: id,
-            group: "lights",
-            severity: "info",
-            icon: st.attributes.icon || "mdi:lightbulb",
-            title: name,
-            sub: area,
-            area,
-            at: isFinite(at) ? at : null,
-            mode: "since",
-            entity: id,
-          })
-        );
+      /* unavailable and unknown are not states anyone means. They are hidden
+       * unless a condition names one outright, because the alternative is the
+       * same two lines of boilerplate on every event anybody ever writes. */
+      if (st.state === "unavailable" || st.state === "unknown") {
+        if (!namesState(cfg.conditions, st.state)) continue;
+      }
+      if (groupMode(cfg)) {
+        grouped.push(id);
         continue;
       }
+      const row = this._decorate(name, cfg, id, st);
+      if (row) out.push(ev(row));
+    }
 
-      let bucket = byArea.get(area);
+    if (grouped.length) this._grouped(out, name, cfg, grouped);
+  }
+
+  /* The row for one entity: the common shape, then whatever its domain knows,
+   * then whatever the configuration says. Three layers, applied in that order,
+   * so config wins in one place instead of being checked inside every
+   * renderer. */
+  _decorate(name, cfg, id, st) {
+    const e = this._base(name, cfg, id, st);
+    const fn = RENDERERS[id.slice(0, id.indexOf("."))];
+    if (fn && this[fn](e, cfg, id, st) === false) return null;
+    return this._applyConfig(e, cfg, id, { name: e.title, area: e.area });
+  }
+
+  /* `title`, `detail`, `status` and `icon` from the configuration, replacing
+   * whatever the domain decided. Interpolated against the entity, with `name`
+   * and `area` carried in from the row so a template can say `{name}` without
+   * repeating the friendly-name split. */
+  _applyConfig(e, cfg, id, vars) {
+    if (cfg.title != null) e.title = this._interp(cfg.title, id, vars);
+    if (cfg.detail != null) e.sub = this._interp(cfg.detail, id, vars);
+    if (cfg.status != null) e.status = this._interp(cfg.status, id, vars);
+    if (cfg.icon) e.icon = cfg.icon;
+    if (cfg.severity) e.severity = cfg.severity;
+    if (cfg.time_mode) e.mode = cfg.time_mode;
+    if (cfg.show_time === false) e.at = null;
+    return e;
+  }
+
+  /* The common shape. Every renderer starts from this and overrides the two or
+   * three fields its domain actually has an opinion about. */
+  _base(name, cfg, id, st) {
+    const a = st.attributes || {};
+    const parts = splitName(a.friendly_name, id);
+    const area = this._areaName(id, st) || parts.area || "";
+    return {
+      key: id,
+      category: cfg.category || GENERIC_CATEGORY,
+      severity: "info",
+      icon: a.icon || "mdi:circle-outline",
+      title: parts.name,
+      sub: area,
+      area: area || null,
+      status: stateLabel(this._hass, st),
+      at: Date.parse(st.last_changed) || null,
+      mode: "since",
+      entity: id,
+    };
+  }
+
+  /* One row per area, counting what landed in it.
+   *
+   * The area is the subject and the count is its state, which is the same
+   * grammar every other row uses: title and location on the left, what it is
+   * doing and for how long on the right. It read the other way round for a
+   * while - "3 lights on" as the title with the room beneath it - which is a
+   * fine sentence and the wrong column. A row that puts its state on the left
+   * breaks the one thing this card is for, which is that a dishwasher, a
+   * radiator and a lit room line up and can be read straight down.
+   *
+   * An area has no subtitle: it is already the whole of what the row is about.
+   *
+   * Light group helpers are dropped here rather than by a naming convention: a
+   * light group publishes its members in `attributes.entity_id`, which is a
+   * fact about the domain and true in every installation, where `_group` in
+   * the id is one house's habit. Without it every member room counts twice. */
+  _grouped(out, name, cfg, ids) {
+    const hass = this._hass;
+    const text = this._config.text;
+    const mode = groupMode(cfg);
+    const one = singular(cfg);
+    const buckets = new Map();
+
+    for (const id of ids) {
+      const st = hass.states[id];
+      const a = st.attributes || {};
+      if (Array.isArray(a.entity_id)) continue;
+      /* `all` is one bucket with no room of its own, so its title falls back to
+       * the event's name rather than to a place. */
+      const area = mode === "all" ? null : this._areaName(id, st) || text.elsewhere;
+      let bucket = buckets.get(area);
       if (!bucket) {
         bucket = { area, ids: [], at: Infinity };
-        byArea.set(area, bucket);
+        buckets.set(area, bucket);
       }
       bucket.ids.push(id);
+      const at = Date.parse(st.last_changed);
       if (isFinite(at) && at < bucket.at) bucket.at = at;
     }
 
-    for (const b of byArea.values()) {
-      const n = b.ids.length;
-      out.push(
-        ev({
-          /* Lights are a state, not an event: nothing is being asked of
-           * anyone, so they take the informational grey and sit below the
-           * things that are actually running. Green here would put "the couch
-           * lamp is on" at the same weight as "the dryer is mid-cycle". */
-          key: "lights:" + b.area,
-          group: "lights",
-          severity: "info",
-          icon: n > 1 ? "mdi:lightbulb-group" : "mdi:lightbulb",
-          /* The count is the headline because it is the part that varies; the
-           * room is the qualifier. "3 lights on" then "Bed Room Lynn" reads as
-           * a sentence in the two-line row. */
-          title: n === 1 ? "1 light on" : `${n} lights on`,
-          sub: b.area,
-          area: b.area,
-          /* The oldest of the group: how long the room has been lit, not how
-           * long ago the last lamp joined in. */
-          at: isFinite(b.at) ? b.at : null,
-          mode: "since",
-          entity: b.ids[0],
-        })
-      );
+    for (const b of buckets.values()) {
+      /* Decorated with `one`, not `cfg`: see singular(). */
+      const members = b.ids
+        .map((id) => this._decorate(name, one, id, hass.states[id]))
+        .filter(Boolean);
+      if (!members.length) continue;
+
+      /* A group of one is a device with a room written on it twice. One lamp
+       * on in the study is "Ceiling, Study Room", not "Study Room" with a
+       * chevron hiding the word Ceiling - and the row this pushes is exactly
+       * the row opening the group would have shown, so nothing is lost by the
+       * group never appearing. */
+      if (members.length === 1) {
+        out.push(ev(members[0]));
+        continue;
+      }
+
+      const n = members.length;
+      const label = b.area || humanise(name);
+      const vars = { n: n, name: label, area: b.area || "" };
+      const e = {
+        key: name + ":" + (b.area || "all"),
+        category: cfg.category || GENERIC_CATEGORY,
+        severity: "info",
+        icon: "mdi:circle-outline",
+        title: label,
+        sub: "",
+        area: b.area,
+        status: "",
+        /* The oldest of the group: how long the area has been this way, not
+         * how long ago the last one joined in. */
+        at: isFinite(b.at) ? b.at : null,
+        mode: "since",
+        /* Not b.ids[0]. A grouped row is about the group; opening the first
+         * lamp the index happened to reach is answering a question nobody
+         * asked. `members` is what a click gets instead - see _handleClick. */
+        entity: "",
+        /* The room is dropped from a child that would only repeat the row
+         * above it - the detail line is for what this row adds, and under Bed
+         * Room Lynn a second Bed Room Lynn adds nothing. An `all` group has no
+         * room to repeat, a solo row above kept its own, and a `detail:`
+         * template that says something else survives. */
+        members: members.map((m) =>
+          m.sub && m.sub === b.area ? { ...m, sub: "" } : m
+        ),
+      };
+      out.push(ev(this._applyConfig(e, plural(cfg, n), b.ids[0], vars)));
     }
   }
 
-  _appliances(out) {
-    const cfg = this._config.sources.appliances;
-    if (!cfg.enabled) return;
-    const hass = this._hass;
-
-    for (const id of this._index().appliances) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st) continue;
-      const raw = String(st.state || "").trim();
-      const low = raw.toLowerCase();
-      if (APPLIANCE_IDLE.has(low) && !(cfg.include_standby && low === "standby")) continue;
-
-      const known = APPLIANCE_STATES[low];
-      const attrs = st.attributes || {};
-      const { area, name } = splitName(attrs.friendly_name, id);
-      out.push(
-        ev({
-          key: id,
-          group: "appliances",
-          severity: known ? known.severity : "active",
-          icon: attrs.icon || "mdi:power-plug",
-          title: stripSuffix(name, ["State"]),
-          sub: this._areaName(id, st) || area || "",
-          area: this._areaName(id, st) || area,
-          /* An unrecognised state still gets shown - a new appliance with its
-           * own words should appear rather than be silently dropped - but
-           * snake_case is the integration's spelling, not a person's. */
-          status: known ? known.label : humanise(raw),
-          at: Date.parse(st.last_changed) || null,
-          /* A finished appliance is measured from when it finished; a running
-           * one from when it started. Same number, opposite tense, and the
-           * tense is what tells you whether to go and do something. */
-          mode: known && known.severity === "attention" ? "ago" : "since",
-          entity: id,
-        })
-      );
-    }
+  /* Every renderer below takes the row and fills in what its domain knows.
+   * None of them reads the configuration - `_applyConfig` runs afterwards and
+   * overrides whatever they decided, which is why the `if (cfg.severity ==
+   * null)` guard that used to be repeated in four of them is gone.
+   *
+   * Returning false suppresses the row outright. Only lights need it.
+   *
+   * The `_render` prefix is not decoration. These are reached by name through
+   * RENDERERS, so a renderer called `_timer` resolved to `this._timer` - which
+   * is the tick interval's handle, a number, and calling it threw on every
+   * timer row. A namespace that a state field can wander into is not one to
+   * look things up in. */
+  _renderLight(e, cfg, id, st) {
+    const a = st.attributes || {};
+    /* A light group publishes its members in `attributes.entity_id`. Rendering
+     * it as well as its members puts the same lamps on the card twice. */
+    if (Array.isArray(a.entity_id)) return false;
+    e.icon = a.icon || "mdi:lightbulb";
+    e.status = "";
   }
 
-  _climate(out) {
-    const cfg = this._config.sources.climate;
-    if (!cfg.enabled) return;
-    const hass = this._hass;
-
-    for (const id of this._index().climate) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st || st.state === "off" || st.state === "unavailable") continue;
-
-      const a = st.attributes || {};
-      /* hvac_action is the truth when the integration reports it - a
-       * thermostat can be in `heat` while sitting idle at setpoint. SmartIR
-       * and similar integrations omit it, so the mode stands in. */
-      const action = a.hvac_action || null;
-      const idle = action === "idle" || action === "off";
-      if (idle && !cfg.show_idle) continue;
-
-      const mode = action || st.state;
-      const isCool = mode === "cooling" || mode === "cool" || mode === "dry" || mode === "drying";
-      const label =
-        {
-          heating: "Heating",
-          cooling: "Cooling",
-          drying: "Drying",
-          fan: "Fan",
-          idle: "Idle",
-          heat: "Heating",
-          cool: "Cooling",
-          dry: "Drying",
-          fan_only: "Fan",
-          heat_cool: "Auto",
-          auto: "Auto",
-        }[mode] || String(mode).replace(/^./, (c) => c.toUpperCase());
-
-      const cur = temp(a.current_temperature);
-      const set = temp(a.temperature);
-      /* An arrow, not the ">" the old templates used: it reads as "moving
-       * toward" rather than "greater than", which was actively wrong when
-       * cooling from 25.5 to 18. _row gives it its own span so it can carry
-       * enough weight to survive the viewing distance. */
-      const arrow = cfg.arrow || "→";
-      const range =
-        cur !== null && set !== null
-          ? `${cur}° ${arrow} ${set}°`
-          : cur !== null
-          ? `${cur}°`
-          : "";
-
-      const { area, name } = splitName(a.friendly_name, id);
-      const areaName = this._areaName(id, st) || area || "";
-      /* Climate entities are named after their function, not their identity:
-       * "Bed Room Noud | Heating" leaves nothing but the word "Heating" once
-       * the room is split off, and "Heating / Heating" is not a row. When the
-       * name is entirely boilerplate the room becomes the subject - which is
-       * true anyway, since what is heating is the room. Devices with a name of
-       * their own (Air Conditioner) keep it and take the room as detail. */
-      const device = stripSuffix(name, ["Heating", "Thermostat", "Climate", "Room", "TRV"]);
-      const title = device || areaName || name;
-      const where = device ? areaName : "";
-      const detail = [where, range].filter(Boolean).join(" · ");
-      out.push(
-        ev({
-          key: id,
-          group: "climate",
-          severity: idle ? "info" : "active",
-          tone: idle ? null : isCool ? "cool" : "heat",
-          icon: a.icon || (isCool ? "mdi:snowflake" : "mdi:radiator"),
-          title,
-          /* The temperatures are the detail. Where they sit against the room
-           * depends on whether the room already carried the title. */
-          sub: detail || areaName,
-          area: areaName,
-          status: label,
-          at: Date.parse(st.last_changed) || null,
-          mode: "since",
-          entity: id,
-        })
-      );
-    }
+  _renderAlarm(e, cfg, id, st) {
+    const a = st.attributes || {};
+    const state = String(st.state);
+    /* A panel is not a room device. Only a registry area counts as a location
+     * here; without one the whole friendly name is the title, because
+     * `Alarm | Master` split into "Master" under "Alarm" reads as a room
+     * called Alarm containing a thing called Master. */
+    const where = this._registryArea(id);
+    const parts = splitName(a.friendly_name, id);
+    e.title = where ? parts.name : [parts.area, parts.name].filter(Boolean).join(SEPARATOR);
+    e.sub = where || "";
+    e.area = where;
+    /* Only a panel that has gone off is asking anything of anyone; arming and
+     * pending are transient and worth noticing. */
+    e.severity = ALARM_SEVERITY[state] || "info";
+    e.icon =
+      a.icon ||
+      (state === "triggered"
+        ? "mdi:shield-alert"
+        : state === "disarmed"
+        ? "mdi:shield-off-outline"
+        : "mdi:shield-home");
   }
 
-  _timers(out) {
-    const cfg = this._config.sources.timers;
-    if (!cfg.enabled) return;
+  _renderClimate(e, cfg, id, st) {
     const hass = this._hass;
+    const text = this._config.text;
+    const a = st.attributes || {};
+    /* hvac_action is the truth when the integration reports it - a thermostat
+     * can be in `heat` while sitting idle at setpoint. SmartIR and similar
+     * integrations omit it, so the mode stands in. */
+    const action = a.hvac_action || null;
+    const idle = action === "idle" || action === "off";
 
-    for (const id of this._index().timers) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st || st.state !== "active") continue;
-      const a = st.attributes || {};
-      const { area, name } = splitName(a.friendly_name, id);
-      /* `finishes_at` is on the timer entity itself. The old cards read
-       * `sensor.<timer>_remaining` helpers that do not exist in this config, so
-       * every ventilation row rendered "Active for " with nothing after it. */
-      const at = parseHassTime(a.finishes_at) || Date.parse(a.finishes_at) || null;
-      out.push(
-        ev({
-          key: id,
-          group: "climate",
-          severity: "active",
-          icon: a.icon || "mdi:fan",
-          title: stripSuffix(name, ["Timer"]),
-          sub: this._areaName(id, st) || area || "",
-          area: this._areaName(id, st) || area,
-          status: "Running",
-          at,
-          mode: "until",
-          entity: id,
-        })
-      );
-    }
+    const mode = action || st.state;
+    const isCool = mode === "cooling" || mode === "cool" || mode === "dry" || mode === "drying";
+    /* Whichever of the two vocabularies this value came from. `action` is set
+     * only when the integration reports hvac_action; otherwise `mode` is the
+     * entity's own state and takes the mode key. */
+    const label = localized(
+      hass,
+      (action ? CLIMATE_ACTION_KEY : CLIMATE_MODE_KEY) + mode,
+      text.climate[mode],
+      humanise(mode)
+    );
+
+    const cur = temp(a.current_temperature);
+    const set = temp(a.temperature);
+    const deg = text.degree;
+    const range =
+      cur !== null && set !== null
+        ? `${cur}${deg} ${text.arrow} ${set}${deg}`
+        : cur !== null
+        ? `${cur}${deg}`
+        : "";
+
+    const parts = splitName(a.friendly_name, id);
+    const areaName = this._areaName(id, st) || parts.area || "";
+    /* Climate entities are named after their function, not their identity:
+     * "Bed Room Noud | Heating" leaves nothing but the word "Heating" once the
+     * room is split off, and "Heating / Heating" is not a row. When the name is
+     * entirely boilerplate the room becomes the subject - which is true anyway,
+     * since what is heating is the room. Devices with a name of their own (Air
+     * Conditioner) keep it and take the room as detail. */
+    const device = stripSuffix(parts.name, text.strip.climate);
+    const where = device ? areaName : "";
+
+    e.title = device || areaName || parts.name;
+    e.severity = idle ? "info" : "active";
+    e.tone = idle ? null : isCool ? "cool" : "heat";
+    e.icon = a.icon || (isCool ? "mdi:snowflake" : "mdi:radiator");
+    /* The temperatures are the detail. Where they sit against the room depends
+     * on whether the room already carried the title. */
+    e.sub = [where, range].filter(Boolean).join(" \u00b7 ") || areaName;
+    e.area = areaName;
+    e.status = label;
   }
 
-  _media(out) {
-    const cfg = this._config.sources.media;
-    if (!cfg.enabled) return;
-    const hass = this._hass;
-    const live = new Set(["playing"]);
-    if (cfg.include_paused) live.add("paused");
-
-    for (const id of this._index().media) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st || !live.has(st.state)) continue;
-      const a = st.attributes || {};
-      const { area, name } = splitName(a.friendly_name, id);
-      const track = [a.media_title, a.media_artist].filter(Boolean).join(" · ");
-      out.push(
-        ev({
-          /* Informational for the same reason as lights. A speaker playing is
-           * worth knowing about - it is how you catch a TV left on in an empty
-           * room - but it is not asking anything of you, and this house plays
-           * TV audio through Sonos, so an "active" green would sit on the card
-           * every evening and teach the eye to skip that colour. */
-          key: id,
-          group: "media",
-          severity: "info",
-          icon: a.icon || (st.state === "playing" ? "mdi:play-circle" : "mdi:pause-circle"),
-          title: stripSuffix(name, ["Media Player"]) || area || name,
-          sub: track || this._areaName(id, st) || "",
-          area: this._areaName(id, st) || area,
-          status: st.state === "playing" ? "Playing" : "Paused",
-          at: Date.parse(st.last_changed) || null,
-          mode: "since",
-          entity: id,
-        })
-      );
-    }
+  _renderTimer(e, cfg, id, st) {
+    const text = this._config.text;
+    const a = st.attributes || {};
+    e.title = stripSuffix(e.title, text.strip.timer);
+    e.severity = "active";
+    e.icon = a.icon || "mdi:fan";
+    e.status = text.status.running;
+    /* `finishes_at` is on the timer entity itself. The old cards read
+     * `sensor.<timer>_remaining` helpers that do not exist in this config, so
+     * every ventilation row rendered "Active for " with nothing after it. */
+    e.at = parseHassTime(a.finishes_at) || Date.parse(a.finishes_at) || null;
+    /* What is left of it, not when it ends. A timer is something someone set
+     * for a length of time, and "28m remaining" is the number they were
+     * thinking in; "in 28m" makes them do the subtraction back. */
+    e.mode = "remaining";
   }
 
-  _house(out) {
-    const cfg = this._config.sources.house;
-    if (!cfg.enabled) return;
-    const hass = this._hass;
-    const idx = this._index();
-
-    for (const id of idx.covers) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st || st.state === "closed" || st.state === "unavailable") continue;
-      const a = st.attributes || {};
-      const { area, name } = splitName(a.friendly_name, id);
-      const pos = num(a.current_position);
-      out.push(
-        ev({
-          key: id,
-          group: "house",
-          severity: "info",
-          icon: a.icon || "mdi:window-shutter-open",
-          title: name,
-          sub: this._areaName(id, st) || area || "",
-          area: this._areaName(id, st) || area,
-          status: pos !== null && pos > 0 && pos < 100 ? `${pos}% open` : "Open",
-          at: Date.parse(st.last_changed) || null,
-          mode: "since",
-          entity: id,
-        })
-      );
-    }
-
-    for (const id of idx.vacuums) {
-      const st = hass.states[id];
-      if (this._excluded(id, cfg, st)) continue;
-      if (!st || ["docked", "off", "idle", "unavailable"].indexOf(st.state) !== -1) continue;
-      const a = st.attributes || {};
-      const { area, name } = splitName(a.friendly_name, id);
-      out.push(
-        ev({
-          key: id,
-          group: "house",
-          severity: st.state === "error" ? "alert" : "active",
-          icon: a.icon || "mdi:robot-vacuum",
-          title: name,
-          sub: this._areaName(id, st) || area || "",
-          area: this._areaName(id, st) || area,
-          status: String(st.state).replace(/^./, (c) => c.toUpperCase()),
-          at: Date.parse(st.last_changed) || null,
-          mode: "since",
-          entity: id,
-        })
-      );
-    }
+  _renderMedia(e, cfg, id, st) {
+    const text = this._config.text;
+    const a = st.attributes || {};
+    const track = [a.media_title, a.media_artist].filter(Boolean).join(" \u00b7 ");
+    const parts = splitName(a.friendly_name, id);
+    e.title = stripSuffix(parts.name, text.strip.media) || parts.area || parts.name;
+    e.icon = a.icon || (st.state === "playing" ? "mdi:play-circle" : "mdi:pause-circle");
+    e.sub = track || e.area || "";
   }
 
-  /* Interpolation for `custom` entries. {state} and {attr.foo} read from the
-   * entry's own entity; {state@other.entity} reads from another. Deliberately
-   * not Jinja: a template that needs branching is a template sensor, which can
-   * be tested in the template editor and reused elsewhere. */
-  _interp(text, entityId) {
+  _renderCover(e, cfg, id, st) {
+    const text = this._config.text;
+    const a = st.attributes || {};
+    const pos = num(a.current_position);
+    e.icon = a.icon || "mdi:window-shutter-open";
+    /* A cover stopped part-way is the interesting case, and core has no state
+     * for it - the state is just "open". The percentage is ours; fully open is
+     * core's word for it. */
+    e.status =
+      pos !== null && pos > 0 && pos < 100
+        ? fill(text.status.open_pct, pos)
+        : stateLabel(this._hass, st, text.status.open);
+  }
+
+  _renderVacuum(e, cfg, id, st) {
+    const a = st.attributes || {};
+    e.icon = a.icon || "mdi:robot-vacuum";
+    e.severity = st.state === "error" ? "alert" : "active";
+  }
+
+  /* Row templates. `{state}` and `{attr.foo}` read the event's own entity,
+   * `{state@other.entity}` reads another, and `{name}`, `{area}` and `{n}` are
+   * handed in by the caller - the friendly-name split has already happened by
+   * then and doing it twice would be the only expensive part of this.
+   *
+   * Deliberately not Jinja: a template that needs branching is a template
+   * sensor, which can be tested in the template editor and reused elsewhere. */
+  _interp(text, entityId, vars) {
     const hass = this._hass;
+    const v = vars || {};
     return String(text).replace(/\{([^}]+)\}/g, (_, expr) => {
       const [path, target] = expr.split("@");
+      const p = path.trim();
+      if (!target && v[p] != null) return String(v[p]);
       const st = hass.states[(target || entityId).trim()];
       if (!st) return "";
-      const p = path.trim();
       /* {state} is humanised, {state.raw} is not. Integration states are
        * written for state machines - armed_away, water_shortage - and this
-       * lands in a row a person reads, so the same treatment the appliance
-       * source gives them applies here. Attributes are left alone: they are
+       * lands in a row a person reads. Attributes are left alone: they are
        * already prose more often than not. */
       if (p === "state") return humanise(st.state);
       if (p === "state.raw") return st.state;
       if (p.startsWith("attr.")) {
-        const v = st.attributes[p.slice(5)];
-        return v == null ? "" : String(v);
+        const val = st.attributes[p.slice(5)];
+        return val == null ? "" : String(val);
       }
       return "";
     });
   }
 
-  _conditionsMet(conditions) {
+  _conditionsMet(conditions, self) {
     if (!conditions || !conditions.length) return true;
     const now = new Date();
     for (const cond of conditions) {
-      /* Time and weekday need no entity. That is the whole point: a window is
-       * a property of the clock, not of something in the house, and routing it
-       * through a `tod` helper entity only to read that entity back is a
-       * round trip with no destination. */
+      if (!this._condition(cond, self, now)) return false;
+    }
+    return true;
+  }
+
+  _condition(cond, self, now) {
+    const kind = cond.condition || conditionKind(cond);
+
+    if (kind === "and") {
+      return cond.conditions.every((c) => this._condition(c, self, now));
+    }
+    if (kind === "or") {
+      return cond.conditions.some((c) => this._condition(c, self, now));
+    }
+    /* Core's `not` passes when *none* of the embedded conditions do, which is
+     * NOR rather than the negation of an AND. Written as core words it. */
+    if (kind === "not") {
+      return !cond.conditions.some((c) => this._condition(c, self, now));
+    }
+
+    if (kind === "time") {
+      /* A window is a property of the clock, not of something in the house,
+       * so this needs no entity. Routing it through a `tod` helper only to
+       * read that helper back is a round trip with no destination. */
       if (cond.after != null || cond.before != null) {
         const inside = withinWindow(cond.after, cond.before, now);
-        if (inside === null) return false; // unparseable window: never matches
-        if (!inside) return false;
+        if (inside !== true) return false; // null: unparseable, never matches
       }
       if (cond.weekday != null) {
         const want = (Array.isArray(cond.weekday) ? cond.weekday : [cond.weekday])
           .map((d) => String(d).slice(0, 3).toLowerCase());
         if (want.indexOf(WEEKDAYS[now.getDay()]) === -1) return false;
       }
+      return true;
+    }
 
-      if (cond.entity == null) continue;
-      const st = this._hass.states[cond.entity];
-      if (!st) return false;
-      if (cond.state != null) {
-        const want = Array.isArray(cond.state) ? cond.state : [cond.state];
-        if (want.map(String).indexOf(st.state) === -1) return false;
+    const st = this._hass.states[cond.entity || self];
+    if (!st) return false;
+
+    /* How long it has been this way, core's spelling. Measured from
+     * last_changed rather than last_updated: an attribute moving is not the
+     * state changing, and "on for five minutes" should not be reset by a
+     * brightness tweak. */
+    if (cond["for"] != null) {
+      const held = parseDuration(cond["for"]);
+      const since = Date.parse(st.last_changed);
+      if (held === null || !isFinite(since) || now - since < held) return false;
+    }
+
+    if (kind === "numeric_state") {
+      const raw = cond.attribute != null
+        ? (st.attributes || {})[cond.attribute]
+        : st.state;
+      const value = toNumber(raw);
+      /* unavailable, unknown, a word, a missing attribute: not a number, so
+       * not above and not below either. A threshold that quietly held for
+       * every unavailable sensor would fill the card at exactly the moment
+       * something had gone wrong. */
+      if (value === null) return false;
+      if (cond.above != null) {
+        const above = this._threshold(cond.above);
+        if (above === null || !(value > above)) return false;
       }
-      if (cond.state_not != null) {
-        const no = Array.isArray(cond.state_not) ? cond.state_not : [cond.state_not];
-        if (no.map(String).indexOf(st.state) !== -1) return false;
+      if (cond.below != null) {
+        const below = this._threshold(cond.below);
+        if (below === null || !(value < below)) return false;
       }
+      return true;
+    }
+
+    if (cond.state != null) {
+      const want = Array.isArray(cond.state) ? cond.state : [cond.state];
+      if (want.map(String).indexOf(st.state) === -1) return false;
+    }
+    if (cond.state_not != null) {
+      const no = Array.isArray(cond.state_not) ? cond.state_not : [cond.state_not];
+      if (no.map(String).indexOf(st.state) !== -1) return false;
     }
     return true;
   }
 
-  _custom(out) {
-    const hass = this._hass;
-    for (let i = 0; i < this._config.custom.length; i++) {
-      const c = this._config.custom[i];
-      const st = hass.states[c.entity];
-      if (!st) continue;
-
-      const when = c.when == null ? null : Array.isArray(c.when) ? c.when : [c.when];
-      const notWhen = c.when_not == null ? null : Array.isArray(c.when_not) ? c.when_not : [c.when_not];
-      if (when && when.map(String).indexOf(st.state) === -1) continue;
-      if (notWhen && notWhen.map(String).indexOf(st.state) !== -1) continue;
-      /* No `when` at all means "show whenever the entity is not off/idle",
-       * which covers the common case without asking for a state list. */
-      if (!when && !notWhen && APPLIANCE_IDLE.has(String(st.state).toLowerCase())) continue;
-
-      /* Extra entities that must also agree, AND-ed. This is what lets one
-       * entry mean "the alarm is disarmed *and* it is bedtime" - the shape the
-       * old dashboard expressed with a nested visibility block. Deliberately
-       * the same vocabulary Lovelace uses (`state` / `state_not`) rather than a
-       * private one. */
-      if (!this._conditionsMet(c.conditions)) continue;
-
-      const a = st.attributes || {};
-      const { area, name } = splitName(a.friendly_name, c.entity);
-      out.push(
-        ev({
-          key: "custom:" + i + ":" + c.entity,
-          group: c.group || "alerts",
-          severity: c.severity || "alert",
-          icon: c.icon || a.icon || "mdi:alert",
-          title: c.title ? this._interp(c.title, c.entity) : name,
-          sub: c.detail ? this._interp(c.detail, c.entity) : this._areaName(c.entity, st) || area || "",
-          area: this._areaName(c.entity, st) || area,
-          status: c.status ? this._interp(c.status, c.entity) : "",
-          at: c.show_time === false ? null : Date.parse(st.last_changed) || null,
-          mode: c.time_mode || "since",
-          entity: c.entity,
-        })
-      );
-    }
+  /* A bound is a number, or the id of an entity holding one - the same
+   * latitude an automation gives it. That is what lets a limit live in an
+   * input_number and be moved from a dashboard slider instead of by editing
+   * this configuration. Checked against the state machine first, so "20.5"
+   * stays the number it obviously is. */
+  _threshold(v) {
+    if (typeof v === "number") return isFinite(v) ? v : null;
+    if (v == null) return null;
+    const key = String(v);
+    const st = this._hass.states[key];
+    return st ? toNumber(st.state) : toNumber(key);
   }
-
-  /* ---------------------------------------------------------------- model */
 
   _collect() {
     const out = [];
-    this._custom(out); // first, so an explicit entry wins a key collision
-    this._climate(out);
-    this._timers(out);
-    this._appliances(out);
-    this._media(out);
-    this._house(out);
-    this._lights(out);
+    for (const [name, cfg] of this._config._events) this._event(out, name, cfg);
 
     const seen = new Set();
     return out.filter((e) => {
@@ -1442,7 +2542,8 @@ class HomeEventCard extends HTMLElement {
     };
 
     if (by === "area") {
-      for (const e of events) push(e.area || "Elsewhere", e.area || "Elsewhere", e);
+      const other = this._config.text.elsewhere;
+      for (const e of events) push(e.area || other, e.area || other, e);
       /* Alphabetical by room. Floor order would be better, but it would need a
        * floor registry lookup per row for a list this short. */
       return this._capSections(
@@ -1451,49 +2552,60 @@ class HomeEventCard extends HTMLElement {
     }
 
     if (by === "severity") {
-      const labels = {
-        alert: "Needs attention",
-        attention: "Finished",
-        active: "Running",
-        info: "Also happening",
-      };
+      const labels = this._config.text.severities;
       for (const e of events) push(e.severity, labels[e.severity] || e.severity, e);
       return this._capSections(
         [...buckets.values()].sort((a, b) => SEVERITY_RANK[a.id] - SEVERITY_RANK[b.id])
       );
     }
 
+    /* `groups` sets order and headings for the sections you care about. An id
+     * that is not in it is not an error - it is a section you have not got
+     * round to naming, so it is created, titled from its id and appended after
+     * the declared ones. Declaring nothing at all still produces a working
+     * card, which is the point: the list is for arranging sections, not for
+     * registering them. */
+    const cats = this._config.categories;
+    const order = cats.map((c) => c.id);
+    const labels = {};
+    for (const c of cats) labels[c.id] = c.label || humanise(c.id);
+    for (const e of events) {
+      const id = e.category || GENERIC_CATEGORY;
+      if (order.indexOf(id) === -1) {
+        order.push(id);
+        labels[id] = humanise(id);
+      }
+    }
+    /* A group id, or false. `true` is the old spelling and still means
+     * "alerts". The section is created like any other rather than having to be
+     * declared, since promoting into a heading that does not exist yet is the
+     * normal case now that nothing is declared by default. */
+    const promoteTo =
+      this._config.promote_alerts === true ? "alerts" : this._config.promote_alerts;
+    const promote = !!promoteTo && events.some((e) => e.severity === "alert");
+    if (promote && order.indexOf(promoteTo) === -1) {
+      order.unshift(promoteTo);
+      labels[promoteTo] = humanise(promoteTo);
+    }
+
     for (const e of events) {
       /* Anything wrong is filed under "Needs attention", whichever source
-       * found it. A water shortage is not an appliance fact that happens to be
-       * red - it is the thing to deal with, and burying it three sections down
-       * under Appliances means the one row that earned its colour is the one
-       * you have to go looking for. Severity outranks category here; the
-       * category still decides where everything else lands. */
-      const id = this._config.promote_alerts && e.severity === "alert" ? "alerts" : e.group;
-      const g = GROUPS.find((x) => x.id === id) || { id, label: id };
-      push(g.id, g.label, e);
+       * found it. A water shortage is not a fact about an appliance that
+       * happens to be red - it is the thing to deal with, and burying it three
+       * sections down means the one row that earned its colour is the one you
+       * have to go looking for. Severity outranks category here; the category
+       * still decides where everything else lands. */
+      const id = promote && e.severity === "alert" ? promoteTo : e.category;
+      push(id, labels[id] || id, e);
     }
-    const order = GROUPS.map((g) => g.id);
     return this._capSections(
       [...buckets.values()].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
     );
   }
 
-  _locale() {
-    return (this._hass && this._hass.locale && this._hass.locale.language) || "en-GB";
-  }
-
-  _use24h() {
-    const fmt = this._hass && this._hass.locale && this._hass.locale.time_format;
-    return fmt !== "12";
-  }
-
   /* --------------------------------------------------------------- render */
 
   _render() {
-    /* _fetchCalendars resolves on its own schedule and can land before the
-     * scaffold exists on some ordering of setConfig / hass / connect. */
     if (!this._root || !this._hass || !this._config) return;
     let events = this._sortEvents(this._collect());
     const total = events.length;
@@ -1511,11 +2623,13 @@ class HomeEventCard extends HTMLElement {
      * different row; the per-minute text refresh happens in _tick. */
     const sig = JSON.stringify([
       this._config.group_by,
-      this._config.compact === "auto"
-        ? total > this._config.compact_threshold
-        : !!this._config.compact,
-      events.map((e) => [e.key, e.severity, e.title, e.sub, e.status, e.at, e.tone]),
+      events.map((e) => [e.key, e.severity, e.title, e.sub, e.status, e.at, e.tone,
+                         e.members ? e.members.map((m) => m.key + m.status) : 0]),
       overflow,
+      /* What is open is part of what is drawn. Without this a toggle changes
+       * nothing until some unrelated entity in the house happens to move. */
+      [...this._open].sort(),
+      [...this._folded].sort(),
     ]);
     if (sig === this._sig) return;
     this._sig = sig;
@@ -1526,17 +2640,9 @@ class HomeEventCard extends HTMLElement {
 
     if (!total) {
       this._root.innerHTML =
-        `<div class="card"><div class="empty">${esc(this._config.empty_text)}</div></div>`;
-      this._prevKeys = new Set();
+        `<div class="card"><div class="empty">${esc(this._config.text.empty)}</div></div>`;
       return;
     }
-
-    /* Which rows are genuinely new since the last paint, so only those animate
-     * in. `null` on the very first paint is deliberate: a card that plays an
-     * entrance every time the dashboard opens is a card you learn to wait for,
-     * and this one is looked at fifty times a day. */
-    const seen = this._prevKeys;
-    const keys = new Set(events.map((e) => e.key));
 
     /* One card per section rather than one card with rules in it.
      *
@@ -1549,20 +2655,28 @@ class HomeEventCard extends HTMLElement {
     const now = Date.now();
     const last = sections.length - 1;
     const split = this._config.split_sections;
-    /* Density answers to load, not to taste. */
-    const compact =
-      this._config.compact === "auto"
-        ? total > this._config.compact_threshold
-        : !!this._config.compact;
+    const text = this._config.text;
     const more = overflow
-      ? `<div class="more">+${overflow} more ${overflow === 1 ? "event" : "events"}</div>`
+      ? `<div class="more">${esc(
+          fill(overflow === 1 ? text.more_event : text.more_events, overflow)
+        )}</div>`
       : "";
 
+    const fold = this._config.collapsible;
     const blocks = sections.map((s, i) => {
+      const shut = fold && this._folded.has(s.id);
       const head = s.label
-        ? `<div class="sec"><span class="lab">${esc(s.label)}</span>` +
+        ? `<div class="sec${fold ? " fold" : ""}${shut ? " shut" : ""}"` +
+          (fold
+            ? ` data-sec-toggle="${esc(s.id)}" role="button" tabindex="0"` +
+              ` aria-expanded="${shut ? "false" : "true"}"`
+            : "") +
+          `>` +
+          (fold ? `<ha-icon class="chv" icon="mdi:chevron-down"></ha-icon>` : "") +
+          `<span class="lab">${esc(s.label)}</span>` +
           `<span class="cnt">${s.events.length}</span></div>`
         : "";
+      if (shut) return split ? `<div class="card shut">${head}</div>` : head;
       /* A scrolling section is bounded by row count, not by pixels: --max
        * carries the limit and the stylesheet turns it into a height using the
        * row metrics for the density actually in use. The extra .45 leaves the
@@ -1572,13 +2686,13 @@ class HomeEventCard extends HTMLElement {
         ? ` scroll" style="--max:${s.scrollTo}`
         : "";
       const rows =
-        `<div class="rows${compact ? " compact" : ""}${bounded}" data-sec="${esc(s.id)}">` +
-        s.events.map((e) => this._row(e, now, seen ? !seen.has(e.key) : false, compact)).join("") +
+        `<div class="rows${bounded}" data-sec="${esc(s.id)}">` +
+        s.events.map((e) => this._row(e, now) + this._membersHtml(e, now)).join("") +
         `</div>`;
       /* Two different overflows, reported where each happened: the section's
        * own under the section, the global one at the end of the card. */
       const capped = s.over
-        ? `<div class="more">+${s.over} more${s.scrollTo ? "" : ""}</div>`
+        ? `<div class="more">${esc(fill(text.more, s.over))}</div>`
         : "";
       const tail = capped + (overflow && i === last ? more : "");
       return split ? `<div class="card">${head}${rows}${tail}</div>` : head + rows;
@@ -1595,6 +2709,14 @@ class HomeEventCard extends HTMLElement {
       if (el.scrollTop) offsets.set(el.dataset.sec, el.scrollTop);
     }
 
+    /* A ceiling on the whole card rather than on any one section. A bare
+     * number is pixels, because that is what anybody writing `max_height: 420`
+     * means; anything else is passed through as the CSS length it looks like. */
+    const cap = this._config.max_height;
+    this._root.style.maxHeight = cap == null || cap === "" ? ""
+      : (typeof cap === "number" || /^\d+$/.test(String(cap)) ? cap + "px" : String(cap));
+    this._root.classList.toggle("bounded", !!this._root.style.maxHeight);
+
     this._root.innerHTML = split
       ? blocks.join("")
       : `<div class="card joined">${blocks.join("")}${more}</div>`;
@@ -1603,7 +2725,6 @@ class HomeEventCard extends HTMLElement {
       const y = offsets.get(el.dataset.sec);
       if (y) el.scrollTop = y;
     }
-    this._prevKeys = keys;
   }
 
   /* Escapes the detail line, then re-promotes the one glyph in it that is doing
@@ -1613,29 +2734,39 @@ class HomeEventCard extends HTMLElement {
    * there is no way for a device name to smuggle a tag in here. */
   _detailHtml(text) {
     const out = esc(text);
-    const arrow = esc(this._config.sources.climate.arrow || "→");
+    const arrow = esc(this._config.text.arrow);
     if (!arrow || out.indexOf(arrow) === -1) return out;
     return out.split(arrow).join(`<span class="arw">${arrow}</span>`);
   }
 
-  _row(e, now, isNew, compact) {
-    const time = e.at ? fmtRelative(e.at, e.mode, now) : "";
+  /* What a grouped row counted, drawn underneath it while it is open. The
+   * rows are the ordinary ones, indented and marked so the eye reads them as
+   * belonging to the line above rather than as siblings of it. */
+  _membersHtml(e, now) {
+    if (!e.members || !this._open.has(e.key)) return "";
+    return (
+      `<div class="kids">` +
+      e.members.map((m) => this._row(m, now)).join("") +
+      `</div>`
+    );
+  }
+
+  _row(e, now) {
+    const time = e.at ? fmtRelative(e.at, e.mode, now, this._config.text.time) : "";
     const tone = e.tone ? ` tone-${e.tone}` : "";
-    const fresh = isNew ? " is-new" : "";
-    const tabbable = e.entity ? ` tabindex="0" role="button"` : "";
-    /* In compact mode the second line folds into the first as a dim suffix.
-     * The right column keeps both slots so the times stay in one column
-     * whichever density is in use. */
-    const left = compact
-      ? `<div class="tx"><div class="t">${esc(e.title)}` +
-        (e.sub ? `<span class="sfx">${this._detailHtml(e.sub)}</span>` : "") +
-        `</div></div>`
-      : `<div class="tx"><div class="t">${esc(e.title)}</div>` +
-        (e.sub ? `<div class="s">${this._detailHtml(e.sub)}</div>` : "") +
-        `</div>`;
+    const open = e.members ? this._open.has(e.key) : false;
+    const grouped = e.members
+      ? ` data-group="${esc(e.key)}" aria-expanded="${open ? "true" : "false"}"`
+      : "";
+    const tabbable = e.entity || e.members ? ` tabindex="0" role="button"` : "";
+    const left =
+      `<div class="tx"><div class="t">${esc(e.title)}</div>` +
+      (e.sub ? `<div class="s">${this._detailHtml(e.sub)}</div>` : "") +
+      `</div>`;
 
     return (
-      `<div class="ev sev-${e.severity}${tone}${fresh}" data-entity="${esc(e.entity)}"${tabbable}>` +
+      `<div class="ev sev-${e.severity}${tone}${open ? " open" : ""}"` +
+      ` data-entity="${esc(e.entity)}"${grouped}${tabbable}>` +
       `<ha-icon class="ic" icon="${esc(e.icon)}"></ha-icon>` +
       left +
       `<div class="rt">` +
@@ -1643,7 +2774,9 @@ class HomeEventCard extends HTMLElement {
       (e.at
         ? `<div class="tm" data-at="${e.at}" data-mode="${e.mode}">${esc(time)}</div>`
         : "") +
-      `</div></div>`
+      `</div>` +
+      (e.members ? `<ha-icon class="exp" icon="mdi:chevron-down"></ha-icon>` : "") +
+      `</div>`
     );
   }
 
@@ -1652,20 +2785,21 @@ class HomeEventCard extends HTMLElement {
    * rebuilding the list, and it leaves focus and hover state alone.
    *
    * The model is rebuilt first, because several rules are answers to the clock
-   * rather than to any entity: a `after`/`before` window opening, a calendar
-   * entry crossing `within_hours`, a light passing `min_minutes`. Without this
+   * rather than to any entity: an `after`/`before` window opening, or a
+   * condition's `for:` elapsing on an entity that has not moved. Without this
    * they would only take effect the next time some unrelated entity in the
    * house happened to change. _render's signature check makes the common case
    * - nothing moved - cost one model build and no DOM work. */
   _tick() {
-    if (!this._root) return;
-    if (this._hass && this._config) this._render();
+    if (!this._root || !this._config) return;
+    if (this._hass) this._render();
     const now = Date.now();
+    const t = this._config.text.time;
     const cells = this._root.querySelectorAll(".tm");
     for (const cell of cells) {
       const at = Number(cell.dataset.at);
       if (!isFinite(at)) continue;
-      const next = fmtRelative(at, cell.dataset.mode, now);
+      const next = fmtRelative(at, cell.dataset.mode, now, t);
       if (cell.textContent !== next) cell.textContent = next;
     }
   }
@@ -1684,6 +2818,21 @@ const STYLES = `
    groups more reliably than a hairline, and it is the same rhythm
    home-utility-card uses between its blocks. */
 .root { display: flex; flex-direction: column; gap: 8px; }
+/* max_height. The gap between cards is the format break, so the scroll
+   container has to be the root rather than any one card - bounding a card
+   instead would clip a section and leave the gap floating. */
+.root.bounded {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--divider-color, rgba(255,255,255,.14)) transparent;
+}
+.root.bounded::-webkit-scrollbar { width: 4px; }
+.root.bounded::-webkit-scrollbar-track { background: transparent; }
+.root.bounded::-webkit-scrollbar-thumb {
+  background: var(--divider-color, rgba(255,255,255,.14));
+  border-radius: 2px;
+}
 .card {
   background: var(--ha-card-background, var(--card-background-color));
   border-radius: var(--ha-card-border-radius, 16px);
@@ -1700,11 +2849,45 @@ const STYLES = `
   gap: 8px;
   padding: 0 0 7px;
 }
+/* A heading that folds says so before it is touched: the chevron is the
+   affordance, and it is the only thing that moves. The label keeps its baseline
+   alignment, so a folding card and a fixed one line up in the same column. */
+.sec.fold { cursor: pointer; user-select: none; }
+.sec.fold .chv {
+  --mdc-icon-size: 16px;
+  width: 16px; height: 16px;
+  margin-inline-start: -3px;
+  align-self: center;
+  color: var(--disabled-text-color);
+  transition: transform .15s ease;
+}
+@media (prefers-reduced-motion: reduce) { .sec.fold .chv { transition: none; } }
+.sec.fold.shut .chv { transform: rotate(-90deg); }
+/* Folded, the heading is the whole card, so it should not sit on 7px of
+   padding meant to separate it from rows that are not there - nor on the 12px
+   block padding of a card with something in it. A folded section is a chip. */
+.sec.shut { padding-bottom: 0; }
+.card.shut { padding-block: 8px; }
+.sec.fold:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* The label leads once there is a chevron before it. */
+.sec.fold .lab { margin-inline-end: auto; }
 
 /* split_sections: false — every section shares one surface, so the break has
    to be drawn rather than left as a gap. This is the layout group_by: area
    wants, where eight rooms would otherwise mean eight small cards. */
 .card.joined .rows + .sec {
+  border-top: 1px solid var(--divider-color, rgba(255,255,255,.06));
+  margin-top: 9px;
+  padding-top: 11px;
+}
+/* Folded, a heading is the whole of its section, so the break that normally
+   follows a run of rows has to follow the heading instead. Without this two
+   folded sections sit flush against each other with nothing between them. */
+.card.joined .sec.shut + .sec {
   border-top: 1px solid var(--divider-color, rgba(255,255,255,.06));
   margin-top: 9px;
   padding-top: 11px;
@@ -1738,13 +2921,20 @@ const STYLES = `
   --row-h: 45px;
   --row-gap: 3px;
   max-height: calc((var(--max) + .45) * (var(--row-h) + var(--row-gap)));
+  /* A scroll container clips what hangs outside it, and two things do: every
+     row bleeds 6px either side so its hover and alert tints reach past the
+     text, and a grouped row's chevron sits 12px beyond the text on the right.
+     Growing into the card's padding by exactly those amounts keeps both
+     visible and keeps the sideways scroll the clipping would otherwise
+     produce from ever existing. */
+  padding-inline: 6px 12px;
+  margin-inline: -6px -12px;
   overflow-y: auto;
   /* A glance panel must not steal the page scroll when a section runs out. */
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--divider-color, rgba(255,255,255,.14)) transparent;
 }
-.rows.compact.scroll { --row-h: 29px; }
 .rows.scroll::-webkit-scrollbar { width: 4px; }
 .rows.scroll::-webkit-scrollbar-track { background: transparent; }
 .rows.scroll::-webkit-scrollbar-thumb {
@@ -1761,7 +2951,58 @@ const STYLES = `
   padding: 6px 6px;
   margin-inline: -6px;
   border-radius: 9px;
-  transition: background-color .15s ease;
+  position: relative;
+}
+/* The chevron is an affordance, not content, so it does not get a column.
+
+   In flow it did: a fourth column pushed a grouped row's status and time 29px
+   left of every other row's on the card, and the children had to be inset to
+   match. On a list whose whole argument is that a dishwasher, a radiator and a
+   lit room line up and can be read straight down, that is the one thing there
+   is no room for. It sits in the card's own 14px of padding instead, starting
+   where the text stops, so the grid is untouched and everything - grouped rows,
+   their children, and every ordinary row - shares one right edge. */
+.ev .exp {
+  position: absolute;
+  inset-inline-end: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  --mdc-icon-size: 14px;
+  width: 14px; height: 14px;
+  color: var(--disabled-text-color);
+  transition: transform .15s ease;
+}
+@media (prefers-reduced-motion: reduce) { .ev .exp { transition: none; } }
+.ev.open .exp { transform: translateY(-50%) rotate(180deg); }
+
+/* What an open row counted.
+
+   The rows are the ordinary rows - same grid, same icon size, same type -
+   because that is what they are. Everything here is position, and every
+   number is taken from the parent's own metrics rather than picked:
+
+     37px  one indent step: the 26px icon column plus its 11px gap, so a
+           child's icon sits under the parent's title
+     12px  the centre of that icon column, where the rail hangs from
+
+   Nothing else. A child is an ordinary row that has been moved sideways: its
+   status and time share the right edge of every other row on the card, which
+   is what the indent is measured against.
+
+   No vertical margin either: .rows already puts 3px between siblings, and
+   adding to it made the gap around an open group twice what it is anywhere
+   else. */
+.kids {
+  display: flex; flex-direction: column; gap: 3px;
+  padding-left: 37px;
+  position: relative;
+}
+.kids::before {
+  content: "";
+  position: absolute;
+  left: 12px; top: 0; bottom: 0;
+  width: 2px; border-radius: 1px;
+  background: var(--divider-color, rgba(255,255,255,.10));
 }
 .ev .ic {
   --mdc-icon-size: 22px;
@@ -1790,14 +3031,6 @@ const STYLES = `
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   margin-top: 2px;
 }
-/* Compact rows carry the detail as a dim suffix rather than a second line. */
-.tx .sfx {
-  font-size: var(--ha-font-size-s, 12px);
-  line-height: var(--ha-line-height-condensed, 1.2);
-  color: var(--secondary-text-color);
-  margin-left: 7px;
-}
-
 /* The arrow is the only glyph on this card doing semantic work - it says
    "moving toward" - and at 12px in secondary grey it read as a hyphen from
    across a room.
@@ -1819,9 +3052,14 @@ const STYLES = `
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+/* The status word carries weight as well as colour. In a list this dense the
+   two say the same thing at different strengths, and weight is what survives
+   being read from across a room where a warm grey and a warm amber are not
+   reliably distinguishable. */
 .rt .st {
   font-size: var(--ha-font-size-s, 12px);
   line-height: var(--ha-line-height-condensed, 1.2);
+  font-weight: var(--ha-font-weight-medium, 500);
   color: var(--primary-text-color);
   white-space: nowrap;
 }
@@ -1878,30 +3116,15 @@ const STYLES = `
 }
 
 /* ---- motion ----
-   The house rule from the sibling cards holds: motion is functional only, and
-   nothing animates on its own. A glance panel that is never still teaches the
-   eye to stop reading it.
+   There is none. The hover and press tints above are state, not motion: they
+   apply on the frame the pointer arrives rather than fading in, which is why
+   removing the transition left them working.
 
-   That leaves exactly one thing worth animating - arrival. On a card whose
-   whole job is "what changed", a row appearing is the event, and a list that
-   silently reflows makes you re-read it to find out what moved. 180ms of fade
-   and a 5px rise is enough to catch the eye without asking it to wait.
-
-   Departure is deliberately not animated: it needs keyed DOM reconciliation to
-   hold a row alive past its own removal, and the payoff is far smaller - the
-   row is gone, which is itself the message. */
-.ev.is-new { animation: ev-in 180ms cubic-bezier(.2, 0, .2, 1) both; }
-@keyframes ev-in {
-  from { opacity: 0; transform: translate3d(0, -5px, 0); }
-  to   { opacity: 1; transform: none; }
-}
-
-.root.no-anim .ev { transition: none; }
-.root.no-anim .ev.is-new { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-  .ev { transition: none; }
-  .ev.is-new { animation: none; }
-}
+   The card used to fade new rows in over 180ms, on the argument that a list
+   whose job is "what changed" should show what arrived. In practice a row
+   appears while you are looking somewhere else, and 180ms is under the
+   threshold where it registers at all - so it cost a class, a keyframe, and a
+   set of previous keys carried between paints to buy nothing. */
 `;
 
 if (!customElements.get("home-event-card")) {
