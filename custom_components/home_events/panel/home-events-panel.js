@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11i";
+const PANEL_BUILD = "2026-08-11k";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -89,6 +89,12 @@ const PLURAL_KEYS = ["title", "status", "icon"];
  * category id can be, because a category id is what this form makes of what
  * somebody typed, and it never makes this. */
 const NEW_CATEGORY = "__new__";
+
+/* What the card calls the section for events that name none. It is a section
+ * like any other once it exists on screen - it has a heading, it holds rows,
+ * and it sorts them - so it is arranged like any other. What it is not is a
+ * section an event can be *put* in: that is what leaving Section alone does. */
+const GENERIC_CATEGORY = "generic";
 
 const TEXT_SLOTS = [
   { key: "title", label: "Title", hint: "The domain's own wording" },
@@ -282,11 +288,9 @@ class HomeEventsPanel extends HTMLElement {
     this._selected = null;
     this._renamedFrom = null;
     this._draft = null;
-    this._name = "";
     this._mode = "visual"; // visual | yaml | library
     this._dirty = false;
     this._built = false;
-    this._pickers = [];
     this._pending = [];
     /* Which criterion is currently a picker, and which of the three questions
      * is on screen. Both are where the person is looking, not what they have
@@ -297,7 +301,6 @@ class HomeEventsPanel extends HTMLElement {
     this._sub = "what";
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
-    this._match = null;
     this._recountTimer = null;
     /* Shown unless it is put away: the whole point of counting is being able
      * to see what was counted. */
@@ -366,12 +369,11 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   async _start() {
-    const [, elements, engine] = await Promise.all([
+    const [, , engine] = await Promise.all([
       this._loadRegistries(),
       loadHaComponents(),
       loadEngine(this._hass),
     ]);
-    this._elements = elements;
     this._engine = engine;
     await this._load();
   }
@@ -456,7 +458,7 @@ class HomeEventsPanel extends HTMLElement {
       <div class="app">
         <header class="bar">
           <button class="icon" data-act="menu" title="Sidebar">&#9776;</button>
-          <div class="title">Events</div>
+          <div class="title" title="home-events-panel ${PANEL_BUILD}">Events</div>
           <select class="preset"></select>
           <span class="grow"></span>
           <button class="ghost" data-act="sections" title="${esc(HELP.sections)}">Sections</button>
@@ -501,7 +503,6 @@ class HomeEventsPanel extends HTMLElement {
       }
     });
     this._el.name.addEventListener("input", () => {
-      this._name = this._el.name.value;
       this._setDirty(true);
     });
     this._el.preset.addEventListener("change", (e) => {
@@ -534,7 +535,7 @@ class HomeEventsPanel extends HTMLElement {
     const order = [];
     const buckets = {};
     for (const name of names) {
-      const cat = events[name].category || "generic";
+      const cat = events[name].category || GENERIC_CATEGORY;
       if (!buckets[cat]) {
         buckets[cat] = [];
         order.push(cat);
@@ -564,12 +565,8 @@ class HomeEventsPanel extends HTMLElement {
           `<span class="nm">${esc(name)}</span>` +
           `<span class="sub">${esc(what)}</span></div>`;
       }).join("");
-      /* Generic is the absence of a section, so there is nothing behind it to
-         open - every other heading is a way into that section's settings. */
-      const head = cat === "generic"
-        ? `<div class="cat">${esc(this._catLabel(cat))}</div>`
-        : `<button class="cat" data-act="editcat" data-cat="${esc(cat)}"
-             title="Settings for this section">${esc(this._catLabel(cat))}</button>`;
+      const head = `<button class="cat" data-act="editcat" data-cat="${esc(cat)}"
+          title="Settings for this section">${esc(this._catLabel(cat))}</button>`;
       return head + rows;
     }).join("");
   }
@@ -582,11 +579,9 @@ class HomeEventsPanel extends HTMLElement {
     if (!event) return;
     this._selected = name;
     this._renamedFrom = name;
-    this._name = name;
     this._draft = this._formShape(clone(event) || {});
     this._mode = "visual";
     this._setDirty(false);
-    this._match = null;
     this._sub = "what";
     this._editing = null;
     this._newcat = false;
@@ -625,11 +620,9 @@ class HomeEventsPanel extends HTMLElement {
     if (!(await this._confirmDiscard())) return;
     this._selected = null;
     this._renamedFrom = null;
-    this._name = "";
     this._draft = this._formShape(clone(STARTER));
     this._mode = "visual";
     this._setDirty(true);
-    this._match = null;
     this._sub = "what";
     this._editing = null;
     this._newcat = false;
@@ -666,6 +659,14 @@ class HomeEventsPanel extends HTMLElement {
     for (const id of this._categories()) {
       if (!declared.some((c) => c.id === id)) declared.push({ id, label: "", sort: "" });
     }
+    /* The section for events that name none. Listed only when something is in
+     * it, because an empty one is a heading for nothing - but listed like any
+     * other when it is, since it has rows to sort and a heading to name. */
+    const homeless = Object.values(this._events())
+      .some((e) => !(e.category || "").trim());
+    if (homeless && !declared.some((c) => c.id === GENERIC_CATEGORY)) {
+      declared.push({ id: GENERIC_CATEGORY, label: "", sort: "" });
+    }
     this._sections = declared;
     this._presetSort = this._preset().sort || "";
     this._el.name.value = this._preset().name || this._presetId;
@@ -682,8 +683,10 @@ class HomeEventsPanel extends HTMLElement {
 
   _sectionsHtml() {
     const rows = this._sections.map((c, i) => {
-      const used = Object.values(this._events())
-        .filter((e) => (e.category || "") === c.id).length;
+      const used = Object.values(this._events()).filter((e) =>
+        c.id === GENERIC_CATEGORY
+          ? !(e.category || "").trim()
+          : (e.category || "") === c.id).length;
       const asked = this._focusSection === c.id;
       return `<div class="crit secrow${asked ? " asked" : ""}">
           <input class="secname" data-sec="${i}.label" spellcheck="false"
@@ -707,15 +710,17 @@ class HomeEventsPanel extends HTMLElement {
     return `<div class="fs">
         <div class="legend">Sections
           <span class="q">— the order they read in, and how each sorts its rows</span></div>
-        <div class="field"><div class="label"${tip("sort")}>Rows read</div><div class="inline">
-          <select data-presetsort>
-            ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
-              `${this._presetSort === o.key ? " selected" : ""}>` +
-              `${esc(o.key ? o.label : "As the card says")}</option>`).join("")}
-          </select>
-          <span class="hint">unless a section below says otherwise</span>
-        </div></div>
-        <div class="crits wide">${rows}
+        <div class="crits wide">
+          <div class="secrow head">
+            <span class="dim"${tip("sort")}>Rows read, unless a section says otherwise</span>
+            <select data-presetsort>
+              ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
+                `${this._presetSort === o.key ? " selected" : ""}>` +
+                `${esc(o.key ? o.label : "As the card says")}</option>`).join("")}
+            </select>
+            <span></span><span></span><span></span><span></span>
+          </div>
+          ${rows}
           <button class="ghost sm" data-act="secadd">+ Add section</button>
         </div>
         <div class="hint">A section an event names but this list does not is
@@ -811,8 +816,6 @@ class HomeEventsPanel extends HTMLElement {
   /* ---------------------------------------------------------------- panes */
 
   _renderPane(text) {
-    for (const p of this._pickers) p.remove();
-    this._pickers = [];
     this._pending = [];
     /* Which drawing this is. Controls made here carry the number and refuse to
      * write once it has moved on - see _pickerFor. */
@@ -845,7 +848,7 @@ class HomeEventsPanel extends HTMLElement {
   _formHtml() {
     const d = this._draft || {};
     const grouped = d.group === true || d.group === "area" || d.group === "all";
-    const cats = this._categories();
+    const cats = this._categories().filter((c) => c !== GENERIC_CATEGORY);
     const sub = this._sub || "what";
     const tab = (id, label) =>
       `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}">` +
@@ -1523,7 +1526,6 @@ class HomeEventsPanel extends HTMLElement {
       box.innerHTML = `<span class="dim">${esc(this._reason(err))}</span>`;
       return;
     }
-    this._match = ids;
     box.innerHTML = this._sub === "when"
       ? this._passingHtml(ids)
       : this._matchCountHtml(ids);
@@ -1969,8 +1971,7 @@ class HomeEventsPanel extends HTMLElement {
       await this._ws(msg);
       this._selected = name;
       this._renamedFrom = name;
-      this._name = name;
-      this._setDirty(false);
+        this._setDirty(false);
       this._el.del.style.display = "";
       await this._reload();
       if (this._mode === "yaml") {
@@ -2265,6 +2266,14 @@ textarea.yaml {
 .secrow .secname { min-width: 0; }
 .secrow select { width: 100%; }
 .secrow .count-of { font-size: 12px; white-space: nowrap; text-align: end; }
+/* The library's own answer, over the column of section answers it is the
+   default for. Same grid, so the two selects are the same control in the same
+   place rather than two controls that happen to be near each other. */
+.secrow.head { padding-bottom: 4px; }
+/* Reading from the left, like everything else on the page. Right-aligning it
+   put the sentence in the middle of a wide panel, next to a control it was
+   only loosely about. */
+.secrow.head .dim { font-size: 12.5px; }
 /* The one that was asked for, when a section heading in the list is what
    opened this view. */
 .secrow.asked { outline: 1px solid var(--primary-color); outline-offset: 3px;
