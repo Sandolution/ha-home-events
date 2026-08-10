@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11h";
+const PANEL_BUILD = "2026-08-11i";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -114,6 +114,53 @@ const esc = (s) =>
   String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
+
+/* What each setting is, in one or two sentences, for the person hovering it.
+ *
+ * Kept in one place rather than beside each control: they are read together,
+ * they have to agree with each other about what things are called, and a
+ * label that has drifted from its explanation is worse than no explanation.
+ * Every one says what the setting does and what happens when it is left
+ * alone, because "what if I do not touch this" is the question a form cannot
+ * answer by looking at it. */
+const HELP = {
+  enabled: "Show this event at all. A disabled event stays in the library and " +
+    "is drawn on no card.",
+  category: "Which section the row appears in. Sections are named, arranged " +
+    "and sorted under Sections.",
+  severity: "How loud the row is: the colour of its dot, and where it sorts. " +
+    "Alerts come first, and a card can promote them into their own section.",
+  group: "Draw one row per room, or one row for the lot, instead of a row for " +
+    "every entity. A group that turns out to hold one thing is drawn as that " +
+    "thing.",
+  title: "The first line of the row. Left empty, the domain decides - a light " +
+    "says its name, an alarm says the panel. {name}, {state} and {attr.x} are " +
+    "filled in from the entity.",
+  detail: "The quieter line beside the title. Usually the room, which is what " +
+    "it says if this is left empty.",
+  status: "What the row says on the right: what the entity is doing. Left " +
+    "empty, the domain decides.",
+  icon: "The icon at the start of the row. Left empty, the entity's own icon " +
+    "is used, or the domain's.",
+  time: "Whether the row carries a time, and which way it runs: since and ago " +
+    "count up from the last change, until and remaining count down to what is " +
+    "next.",
+  include: "Which entities this event covers. Every criterion is a way of " +
+    "naming some - a domain, a room, a floor, a label, a device, an entity, " +
+    "or a pattern.",
+  exclude: "Entities to leave out of what Include selected. An event with " +
+    "nothing here covers everything Include names.",
+  conditions: "And in which state. An event with no conditions shows every " +
+    "entity it covers, whatever they are doing.",
+  sort: "How the rows inside a section read. Severity always comes first and " +
+    "countdowns always run soonest-first; this decides the rest.",
+  sections: "The order sections read in, what each is called, and how each " +
+    "one sorts its rows.",
+  library: "The whole preset as YAML - sections, defaults and every event. " +
+    "Paste one in to replace it.",
+  newevent: "Start an event. It covers nothing until you say what it covers.",
+};
+const tip = (key) => (HELP[key] ? ` title="${esc(HELP[key])}"` : "");
 
 const humanise = (s) =>
   String(s || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -412,12 +459,12 @@ class HomeEventsPanel extends HTMLElement {
           <div class="title">Events</div>
           <select class="preset"></select>
           <span class="grow"></span>
-          <button class="ghost" data-act="sections">Sections</button>
-          <button class="ghost" data-act="library">Whole library</button>
+          <button class="ghost" data-act="sections" title="${esc(HELP.sections)}">Sections</button>
+          <button class="ghost" data-act="library" title="${esc(HELP.library)}">Whole library</button>
         </header>
         <main>
           <aside class="side">
-            <button class="primary wide" data-act="new">New event</button>
+            <button class="primary wide" data-act="new" title="${esc(HELP.newevent)}">New event</button>
             <div class="list"></div>
           </aside>
           <section class="editor">
@@ -517,7 +564,13 @@ class HomeEventsPanel extends HTMLElement {
           `<span class="nm">${esc(name)}</span>` +
           `<span class="sub">${esc(what)}</span></div>`;
       }).join("");
-      return `<div class="cat">${esc(this._catLabel(cat))}</div>${rows}`;
+      /* Generic is the absence of a section, so there is nothing behind it to
+         open - every other heading is a way into that section's settings. */
+      const head = cat === "generic"
+        ? `<div class="cat">${esc(this._catLabel(cat))}</div>`
+        : `<button class="cat" data-act="editcat" data-cat="${esc(cat)}"
+             title="Settings for this section">${esc(this._catLabel(cat))}</button>`;
+      return head + rows;
     }).join("");
   }
 
@@ -595,9 +648,12 @@ class HomeEventsPanel extends HTMLElement {
    * they come in, what each is called, and how the rows inside one are
    * ordered. All three are properties of the library rather than of any one
    * event, so they live behind their own button rather than on the form. */
-  async _openSections() {
+  async _openSections(focus) {
     if (!(await this._confirmDiscard())) return;
     this._mode = "sections";
+    /* Which row was asked for, so a heading clicked in the list lands on that
+     * section rather than on a page of them. */
+    this._focusSection = focus || null;
     this._selected = null;
     this._renamedFrom = null;
     this._draft = null;
@@ -618,7 +674,9 @@ class HomeEventsPanel extends HTMLElement {
     this._el.tabs.style.display = "none";
     this._setDirty(false);
     this._renderPane();
-    this._say("The order sections read in, and how each one sorts its rows.");
+    this._say(focus
+      ? `${this._catLabel(focus)}: how it is arranged, and how it sorts its rows.`
+      : "The order sections read in, and how each one sorts its rows.");
     this._renderList();
   }
 
@@ -626,7 +684,8 @@ class HomeEventsPanel extends HTMLElement {
     const rows = this._sections.map((c, i) => {
       const used = Object.values(this._events())
         .filter((e) => (e.category || "") === c.id).length;
-      return `<div class="crit secrow">
+      const asked = this._focusSection === c.id;
+      return `<div class="crit secrow${asked ? " asked" : ""}">
           <input class="secname" data-sec="${i}.label" spellcheck="false"
                  placeholder="Name this section"
                  value="${esc(c.label || humanise(c.id))}">
@@ -648,7 +707,7 @@ class HomeEventsPanel extends HTMLElement {
     return `<div class="fs">
         <div class="legend">Sections
           <span class="q">— the order they read in, and how each sorts its rows</span></div>
-        <div class="field"><div class="label">Rows read</div><div class="inline">
+        <div class="field"><div class="label"${tip("sort")}>Rows read</div><div class="inline">
           <select data-presetsort>
             ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
               `${this._presetSort === o.key ? " selected" : ""}>` +
@@ -764,6 +823,8 @@ class HomeEventsPanel extends HTMLElement {
 
     if (this._mode === "sections") {
       this._el.pane.innerHTML = this._sectionsHtml();
+      const asked = this._el.pane.querySelector(".secrow.asked select");
+      if (asked) asked.focus();
       return;
     }
     if (this._mode !== "visual") {
@@ -794,7 +855,8 @@ class HomeEventsPanel extends HTMLElement {
 
     if (sub === "when") {
       return tabs + `<div class="fs">
-         <div class="legend">When <span class="q">— and in which state?</span></div>
+         <div class="legend"${tip("conditions")}>When
+           <span class="q">— and in which state?</span></div>
          ${this._conditionsHtml(d.conditions)}
          <div class="count" data-count></div>
        </div>`;
@@ -813,12 +875,12 @@ class HomeEventsPanel extends HTMLElement {
       `<div class="fs">
          <div class="legend">How <span class="q">— how should the row read?</span></div>
 
-         <div class="field"><div class="label">Enabled</div><div>
+         <div class="field"><div class="label"${tip("enabled")}>Enabled</div><div>
            <label class="check"><input type="checkbox" data-set="enabled"
              ${d.enabled === false ? "" : "checked"}> Show this event</label>
          </div></div>
 
-         <div class="field"><div class="label">Section</div><div>
+         <div class="field"><div class="label"${tip("category")}>Section</div><div>
            <select data-set="category">
              <option value=""${d.category || this._newcat ? "" : " selected"}>Generic (default)</option>
              ${cats.map((c) => `<option value="${esc(c)}"` +
@@ -835,7 +897,7 @@ class HomeEventsPanel extends HTMLElement {
              : ""}
          </div></div>
 
-         <div class="field"><div class="label">Severity</div>
+         <div class="field"><div class="label"${tip("severity")}>Severity</div>
            <div class="sev">${SEVERITIES.map((s) =>
              `<button class="chipbtn sev-${esc(s.key)}` +
              `${(d.severity || DEFAULT_SEVERITY) === s.key ? " on" : ""}" ` +
@@ -844,7 +906,7 @@ class HomeEventsPanel extends HTMLElement {
            </div>
          </div>
 
-         <div class="field"><div class="label">Group</div>
+         <div class="field"><div class="label"${tip("group")}>Group</div>
            <div class="seg">${GROUPS.map((g) =>
              `<button data-set="group" data-value="${esc(g.key || "")}"` +
              `${this._groupOf(d) === g.key ? ' class="on"' : ""}>${esc(g.label)}</button>`).join("")}
@@ -853,7 +915,7 @@ class HomeEventsPanel extends HTMLElement {
 
          ${TEXT_SLOTS.map((slot) => this._slotHtml(slot, d, grouped)).join("")}
 
-         <div class="field"><div class="label">Time</div><div class="inline">
+         <div class="field"><div class="label"${tip("time")}>Time</div><div class="inline">
            <label class="check"><input type="checkbox" data-set="show_time"
              ${d.show_time === false ? "" : "checked"}> Show</label>
            <select data-set="time_mode"${d.show_time === false ? " disabled" : ""}>
@@ -916,7 +978,8 @@ class HomeEventsPanel extends HTMLElement {
           ? "Use one wording, whatever the count"
           : "Word it differently when it counts more than one") + `</button>`
       : "";
-    return `<div class="field"><div class="label">${esc(slot.label)}</div>` +
+    return `<div class="field"><div class="label"${tip(slot.key)}>` +
+      `${esc(slot.label)}</div>` +
       `<div>${body}${toggle}</div></div>`;
   }
 
@@ -1164,7 +1227,7 @@ class HomeEventsPanel extends HTMLElement {
         ? "Nothing yet. An event covers what its criteria name."
         : "Nothing excepted."}</div>`;
 
-    return `<div class="field"><div class="label strong">` +
+    return `<div class="field"><div class="label strong"${tip(side)}>` +
       (side === "include" ? "Include" : "Except") +
       `</div><div class="crits">${rows.join("")}${none}${add}${match}</div></div>`;
   }
@@ -1512,6 +1575,12 @@ class HomeEventsPanel extends HTMLElement {
       (n && this._showMatches ? this._matchesHtml(passing) : "");
   }
 
+  /* Every entity, by room, with the state it is in.
+   *
+   * The state is the raw one, not the humanised one: it is there to be typed
+   * into a condition on the tab next door, and a condition matches `heat`,
+   * never `Heat`. It is the difference between writing a condition and
+   * guessing at one. */
   _matchesHtml(ids) {
     const byArea = new Map();
     for (const id of ids) {
@@ -1519,13 +1588,16 @@ class HomeEventsPanel extends HTMLElement {
       const entity = (this._hass.entities || {})[id] || {};
       const area = this._areaNameOf(id, entity) || "Elsewhere";
       if (!byArea.has(area)) byArea.set(area, []);
-      byArea.get(area).push([id, (st.attributes || {}).friendly_name || id]);
+      byArea.get(area).push([id, (st.attributes || {}).friendly_name || id, st.state]);
     }
     const rooms = [...byArea.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     return `<div class="matches">` + rooms.map(([area, rows]) =>
       `<div class="mroom">${esc(area)} <span class="dim">(${rows.length})</span></div>` +
-      rows.slice(0, 40).map(([id, name]) =>
-        `<div class="mrow"><span>${esc(name)}</span><code>${esc(id)}</code></div>`).join("") +
+      rows.slice(0, 40).map(([id, name, state]) =>
+        `<div class="mrow"><span class="mname">${esc(name)}</span>` +
+        `<code class="mstate" title="The state right now, as a condition would ` +
+        `have to spell it">${esc(state == null ? "?" : state)}</code>` +
+        `<code class="mid">${esc(id)}</code></div>`).join("") +
       (rows.length > 40 ? `<div class="mrow dim">and ${rows.length - 40} more</div>` : "")
     ).join("") + `</div>`;
   }
@@ -1572,6 +1644,7 @@ class HomeEventsPanel extends HTMLElement {
       case "new": return this._newEvent();
       case "library": return this._openLibrary();
       case "sections": return this._openSections();
+      case "editcat": return this._openSections(el.dataset.cat);
       case "tab-visual": return this._toVisual();
       case "tab-yaml": return this._openYaml();
       case "critup":
@@ -2029,8 +2102,12 @@ main {
 .editor { display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
 .empty { padding: 24px 16px; color: var(--secondary-text-color); line-height: 1.5; }
 
-.cat { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--secondary-text-color); padding: 14px 10px 6px; }
+.cat { display: block; width: 100%; text-align: start; font: inherit;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--secondary-text-color); padding: 14px 10px 6px;
+  background: none; border: 0; border-radius: 8px; }
+button.cat { cursor: pointer; }
+button.cat:hover { color: var(--primary-text-color); background: rgba(127,127,127,.10); }
 .row { display: grid; grid-template-columns: 8px minmax(0,1fr) auto; align-items: center;
   gap: 10px; padding: 8px 10px; border-radius: 9px; cursor: pointer; }
 .row:hover { background: rgba(127,127,127,.10); }
@@ -2181,6 +2258,10 @@ textarea.yaml {
 .secrow .secname { flex: 1 1 200px; min-width: 120px; }
 .secrow select { flex: 0 0 auto; }
 .secrow .count-of { font-size: 12px; white-space: nowrap; }
+/* The one that was asked for, when a section heading in the list is what
+   opened this view. */
+.secrow.asked { outline: 1px solid var(--primary-color); outline-offset: 3px;
+  border-radius: 8px; }
 .primary.idle {
   background: transparent; color: var(--secondary-text-color);
   border-color: var(--divider-color, rgba(127,127,127,.3)); cursor: default;
@@ -2239,9 +2320,15 @@ textarea.yaml {
   padding-top: 8px; max-height: 260px; overflow: auto; }
 .mroom { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--secondary-text-color); padding: 10px 0 4px; }
-.mrow { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; padding: 2px 0; }
+.mrow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
+  gap: 16px; align-items: baseline; font-size: 13px; padding: 2px 0; }
+.mrow .mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mrow code { font-family: var(--ha-font-family-code, monospace); font-size: 11.5px;
   color: var(--secondary-text-color); }
+/* The state is what the tab next door is being written about, so it reads as
+   a value rather than as a footnote. */
+.mrow .mstate { color: var(--primary-text-color); white-space: nowrap; }
+.mrow .mid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .msg { min-height: 20px; padding-top: 8px; font-size: 13px; flex: none;
   color: var(--secondary-text-color); white-space: pre-wrap; }
