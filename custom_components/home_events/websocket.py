@@ -1,6 +1,6 @@
 """The API the panel and the cards talk to.
 
-Nine commands. Seven of them are admin-only because they write, or because
+Ten commands. Eight of them are admin-only because they write, or because
 they hand out the whole library; `preset` and `subscribe` are not, because a
 card runs as whoever is looking at the dashboard and a wall tablet is rarely
 an administrator.
@@ -14,6 +14,7 @@ written.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -273,6 +274,34 @@ async def ws_import(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"], {"preset": msg["preset"], **saved})
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/parse",
+    vol.Required("yaml"): str,
+})
+@callback
+def ws_parse(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Text in, structure out.
+
+    The form editor draws what it can and leaves the rest as YAML in place - a
+    nested and/or group, say. Those islands still have to become structure
+    before the preset can be saved, and there is one parser in this system, so
+    they become structure here rather than in a second one written in
+    JavaScript.
+    """
+    try:
+        data = yaml.safe_load(msg["yaml"])
+    except yaml.YAMLError as err:
+        connection.send_error(msg["id"], ERR_INVALID,
+                              f"That is not valid YAML. {err}")
+        return
+    # YAML has dates and timestamps; the websocket has JSON. Anything that
+    # cannot survive the trip becomes the text it was written as, which is what
+    # the schema wanted from it in the first place.
+    connection.send_result(msg["id"],
+                           {"data": json.loads(json.dumps(data, default=str))})
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/subscribe"})
 @callback
 def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -293,5 +322,6 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
 @callback
 def async_register(hass: HomeAssistant) -> None:
     for handler in (ws_get, ws_preset, ws_save, ws_delete, ws_export,
-                    ws_import, ws_save_event, ws_delete_event, ws_subscribe):
+                    ws_import, ws_save_event, ws_delete_event, ws_parse,
+                    ws_subscribe):
         websocket_api.async_register_command(hass, handler)

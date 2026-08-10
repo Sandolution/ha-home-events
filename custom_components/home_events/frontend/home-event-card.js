@@ -3235,6 +3235,43 @@ const STYLES = `
    set of previous keys carried between paints to buy nothing. */
 `;
 
+/* The filter engine, for anything that has to answer "which entities does this
+ * select" before a card is drawn - the Event Manager's panel counts matches
+ * with it while a filter is being typed.
+ *
+ * Exported rather than reimplemented. A second engine written to agree with
+ * this one would be a worse bug than any it could catch: it would be
+ * confidently right about a card that is wrong. So this hands out the card's
+ * own gate, `_excluded`, on an element that is never attached to a document.
+ *
+ * `registries` is the {labels, floors} map of id -> entry that the card
+ * normally fetches for itself. The panel already has them for its pickers, so
+ * it passes them in rather than making every keystroke wait on a round trip.
+ */
+export function matchEntities(hass, spec) {
+  const { include, exclude, registries } = spec || {};
+  if (!include) return [];
+  /* createElement, not `new HomeEventCard()`: if some other build of this file
+   * registered the tag first, this module's class is unregistered and `new`
+   * throws Illegal constructor. The registered one is also the more honest
+   * answer - it is the build the dashboard is actually drawing with. */
+  const probe = document.createElement("home-event-card");
+  probe.setConfig({
+    type: "custom:home-event-card",
+    events: { probe: exclude ? { include, exclude } : { include } },
+  });
+  probe._hass = hass;
+  probe._reg = registries || {};
+  const cfg = probe._config.events.probe;
+  const out = [];
+  for (const id of Object.keys(hass.states || {})) {
+    if (!probe._excluded(id, cfg, hass.states[id])) out.push(id);
+  }
+  return out;
+}
+
+export { HomeEventCard, CARD_BUILD };
+
 if (!customElements.get("home-event-card")) {
   customElements.define("home-event-card", HomeEventCard);
 
