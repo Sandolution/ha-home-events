@@ -344,7 +344,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-12a";
+const CARD_BUILD = "2026-08-12b";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1547,6 +1547,8 @@ class HomeEventCard extends HTMLElement {
     this._config = cfg;
     this._sig = null; // force a redraw on the next hass tick
     this._idx = null;
+    /* A library handed over before the config was - see `set library`. */
+    if (this._given) this.libraryOk = this._applyLibrary(this._given);
   }
 
   /* Validate, compile, index. Everything the render path needs to answer
@@ -1679,6 +1681,31 @@ class HomeEventCard extends HTMLElement {
     this._render();
   }
 
+  /* A library handed straight in, instead of the one in .storage.
+   *
+   * The Event Manager shows a row the way this card would draw it, and the
+   * only honest way to do that is to *be* this card - a second renderer that
+   * agreed with the first most of the time would be worse than no preview at
+   * all. So it hands over a library of one event as a property rather than as
+   * config: a dashboard has no business carrying a library, and this is not
+   * a dashboard.
+   *
+   * Setting it also settles the question of where events come from, so the
+   * websocket is never asked and an edit in progress is never overwritten by
+   * whatever happens to be saved.
+   *
+   * `libraryOk` says afterwards whether what was handed over compiled. A
+   * preview is drawn from a draft somebody is still typing, and half a filter
+   * is the normal case there, so this is a question with a real answer rather
+   * than an exception. */
+  set library(data) {
+    this._libraryAsked = true;
+    this._given = data || { events: {} };
+    /* Before setConfig there is nothing to compile into; setConfig applies
+     * what was stashed, so the two can arrive in either order. */
+    this.libraryOk = this._config ? this._applyLibrary(this._given) : null;
+  }
+
   /* The library. There is one, and it is where every event comes from.
    *
    * Asked for once, then followed: `home_events/subscribe` pushes on every
@@ -1713,6 +1740,7 @@ class HomeEventCard extends HTMLElement {
   }
 
   /* What the library says, drawn the way this card is configured to draw it.
+   * True if it compiled.
    *
    * A library that will not compile is logged and dropped rather than thrown:
    * it arrived from somewhere else, possibly while somebody was mid-edit, and
@@ -1731,8 +1759,10 @@ class HomeEventCard extends HTMLElement {
         "home-event-card: the event library was not usable - " +
           ((err && err.message) || err),
       );
-      return;
+      this.libraryError = (err && err.message) || String(err);
+      return false;
     }
+    this.libraryError = null;
     for (const k of ["events", "_events", "_eventsByDomain", "_eventsAll",
                      "_wantRegistries"]) {
       cfg[k] = next[k];
@@ -1762,6 +1792,7 @@ class HomeEventCard extends HTMLElement {
       this._loadRegistries();
       this._render();
     }
+    return true;
   }
 
   /* id -> entry for the two registries hass does not hand out as collections,

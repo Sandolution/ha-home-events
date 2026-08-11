@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12a";
+const PANEL_BUILD = "2026-08-12b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -116,6 +116,57 @@ const STARTER = {
   severity: "info",
 };
 
+/* The preview card's own options.
+ *
+ * Not the dashboard's: there may be several dashboards drawing this library
+ * and the panel has no way to know which one is being thought about. What it
+ * shows is the entry - the row itself, with no section heading around it and
+ * no cap worth hitting. Everything about how the row *reads* comes from the
+ * event, which is the half being edited. */
+const PREVIEW_CONFIG = {
+  type: "custom:home-event-card",
+  group_by: "none",
+  split_sections: false,
+  max: 8,
+  hide_when_empty: false,
+};
+
+/* What can go in Title, Detail, Status and Icon. Read at the bottom of the How
+ * tab, where the fields it is about are - a syntax explained somewhere else is
+ * a syntax nobody finds.
+ *
+ * Every value in the third column was produced by rendering that template
+ * through the card, not written from memory. A cheat sheet is read as
+ * documentation and believed, so a wrong one is worse than none.
+ *
+ * Kept as data rather than as a block of markup so the columns stay columns
+ * and the list can be checked against the card's own _interp. */
+const EXAMPLE_ENTITY = "a light called Bed Room Noud | Ceiling, switched on";
+const PLACEHOLDERS = [
+  ["{name}", "Ceiling", "the entity, without the room"],
+  ["{area}", "Bed Room Noud", "the room it is in"],
+  ["{state}", "On", "what it is doing, in words"],
+  ["{state.raw}", "on", "the same, spelled the way a condition spells it"],
+  ["{attr.brightness}", "35", "any attribute, by name"],
+  ["{attr.friendly_name}", "Bed Room Noud | Ceiling", "the whole name, room and all"],
+  ["{state@sensor.other}", "—", "some other entity's state, not this one's"],
+  ["{n}", "—", "how many rows this one stands for, on a grouped event"],
+];
+
+/* Three replacements and what they actually did, on three real names in this
+ * house. The pattern goes after the first | inside the braces. */
+const FILTER_EXAMPLES = [
+  ["{name|s/ · (State|Error|Status)$//}",
+   "Backup · Manager · State", "Backup · Manager",
+   "drop the machine word an integration put on the end"],
+  ["{attr.friendly_name|s/\\s*\\|\\s*/ — /g}",
+   "Utilities | Gas | Consumption | Daily", "Utilities — Gas — Consumption — Daily",
+   "every | becomes a dash — that is what g is for"],
+  ["{name|s/^(.*) · (.*)$/$2 of $1/}",
+   "Gas · Consumption · Daily", "Daily of Gas · Consumption",
+   "$1 and $2 are whatever the brackets caught"],
+];
+
 const esc = (s) =>
   String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -175,6 +226,10 @@ const HELP = {
   library: "The whole library as YAML - sections, defaults and every event. " +
     "Paste one in to replace it.",
   newevent: "Start an event. It covers nothing until you say what it covers.",
+  preview: "The row itself, drawn by the card rather than imitated: this is a " +
+    "home-event-card holding nothing but this event, reading the house as it " +
+    "is right now. Section headings are left off - what a card puts around " +
+    "the row is the card's half.",
 };
 const tip = (key) => (HELP[key] ? ` title="${esc(HELP[key])}"` : "");
 
@@ -310,7 +365,11 @@ class HomeEventsPanel extends HTMLElement {
     this._sub = "what";
     this._reg = { areas: {}, floors: {}, labels: {}, devices: {} };
     this._engine = null;
-    this._recountTimer = null;
+    this._reflectTimer = null;
+    /* The card drawing the preview row, kept between redraws so typing in
+     * Title updates a row rather than building a card per keystroke. */
+    this._preview = null;
+    this._cheatOpen = false;
     /* Shown unless it is put away: the whole point of counting is being able
      * to see what was counted. */
     this._showMatches = true;
@@ -321,22 +380,21 @@ class HomeEventsPanel extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (first) this._start();
-    else this._laterRecount();
+    else this._laterReflect();
   }
 
-  /* The house moves while the editor is open, and what the counts are about is
-   * the house: a light going on should show up in "3 of 26 are in this state"
-   * without anything being clicked. Home Assistant pushes a new hass on every
-   * state change, which in this house is several a second, so this recomputes
-   * on a trailing second - live enough to watch, cheap enough to ignore. */
-  _laterRecount() {
-    if (this._recountTimer || this._mode !== "visual") return;
-    if (!this._el || !this._el.pane || !this._el.pane.querySelector("[data-count]")) return;
-    this._recountTimer = setTimeout(() => {
-      this._recountTimer = null;
-      if (this._mode === "visual" && this._el.pane.querySelector("[data-count]")) {
-        this._recount();
-      }
+  /* The house moves while the editor is open, and what the counts and the
+   * preview are about is the house: a light going on should show up in "3 of
+   * 26 are in this state", and in the row underneath it, without anything
+   * being clicked. Home Assistant pushes a new hass on every state change,
+   * which in this house is several a second, so this recomputes on a trailing
+   * second - live enough to watch, cheap enough to ignore. */
+  _laterReflect() {
+    if (this._reflectTimer || this._mode !== "visual") return;
+    if (!this._el || !this._el.pane) return;
+    this._reflectTimer = setTimeout(() => {
+      this._reflectTimer = null;
+      if (this._mode === "visual") this._reflect();
     }, 1000);
   }
 
@@ -354,9 +412,9 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._recountTimer) {
-      clearTimeout(this._recountTimer);
-      this._recountTimer = null;
+    if (this._reflectTimer) {
+      clearTimeout(this._reflectTimer);
+      this._reflectTimer = null;
     }
     if (this._unsub) {
       this._unsub.then((off) => off()).catch(() => {});
@@ -834,11 +892,90 @@ class HomeEventsPanel extends HTMLElement {
     }
     this._el.pane.innerHTML = this._formHtml();
     this._mountPickers();
+    /* Whether the cheat sheet is open is where the person is looking, so it
+     * survives a redraw but not the panel being left. */
+    const cheat = this._el.pane.querySelector("[data-cheat]");
+    if (cheat) cheat.addEventListener("toggle", () => { this._cheatOpen = cheat.open; });
     /* A field that appeared because it was asked for should not also have to
      * be clicked. */
     const newcat = this._el.pane.querySelector(".newcat");
     if (newcat) newcat.focus();
+    this._reflect();
+  }
+
+  /* Everything on screen that answers "what would this do, right now": the
+   * match counts and the preview row. Both are about the house rather than
+   * about the form, so they are refreshed together and by the same clock. */
+  _reflect() {
     this._recount();
+    this._repaintPreview();
+  }
+
+  /* The row, drawn by the card.
+   *
+   * A real <home-event-card>, handed the draft as a library of one event and
+   * the live hass. The panel has no renderer of its own and is not getting
+   * one: a second one that agreed with the card most of the time would be a
+   * preview you could not trust, which is worse than no preview.
+   *
+   * The element is kept and moved rather than rebuilt, so typing in Title
+   * updates a row instead of replacing a card eight times a second. */
+  _repaintPreview() {
+    const host = this._el.pane.querySelector("[data-preview]");
+    if (!host) return;
+    if (!customElements.get("home-event-card")) {
+      host.innerHTML = `<div class="hint">The card is not among this
+        dashboard's resources, so there is nothing here to draw the row
+        with.</div>`;
+      return;
+    }
+    const draft = clone(this._draft) || {};
+    if (!draft.include || !Object.keys(draft.include).some(
+      (k) => k !== "match" && (draft.include[k] || []).length)) {
+      if (this._preview) this._preview.remove();
+      host.innerHTML = `<div class="hint">Nothing to draw yet — say what this
+        event covers on the What tab.</div>`;
+      return;
+    }
+    let card = this._preview;
+    if (!card) {
+      card = document.createElement("home-event-card");
+      try {
+        card.setConfig({ ...PREVIEW_CONFIG });
+      } catch (err) {
+        host.innerHTML = `<div class="hint">${esc(this._reason(err))}</div>`;
+        return;
+      }
+      this._preview = card;
+    }
+    if (card.parentNode !== host) {
+      host.innerHTML = "";
+      host.appendChild(card);
+    }
+    /* Switched off is a fact about where the row is drawn, not about how it
+     * reads, so the preview draws it anyway and says so. */
+    const off = draft.enabled === false;
+    delete draft.enabled;
+    /* No section: with no headings on the preview a category would only
+     * decide which of two identical surfaces the row landed on. */
+    delete draft.category;
+    const name = (this._el.name.value || "").trim() || "preview";
+    card.library = {
+      categories: [],
+      non_areas: this._library.non_areas,
+      events: { [name]: draft },
+    };
+    card.hass = this._hass;
+    const note = host.querySelector(".prevnote");
+    if (note) note.remove();
+    const say = card.libraryError
+      ? `Not drawable yet: ${card.libraryError}`
+      : off ? "Switched off, so no card draws it. This is how it would read."
+      : "";
+    if (say) {
+      host.insertAdjacentHTML("beforeend",
+        `<div class="hint prevnote">${esc(say)}</div>`);
+    }
   }
 
   _formHtml() {
@@ -923,8 +1060,50 @@ class HomeEventsPanel extends HTMLElement {
                `${humanise(m)}</option>`).join("")}
            </select>
          </div></div>
-       </div>`
+
+         <div class="field"><div class="label"${tip("preview")}>Reads as</div>
+           <div class="previewbox"><div data-preview></div></div>
+         </div>
+       </div>
+       ${this._examplesHtml()}`
     );
+  }
+
+  /* The syntax, at the bottom of the tab whose fields use it.
+   *
+   * Shut by default and remembered while the panel is open: it is a thing to
+   * consult, not a thing to read every time, and somebody who has opened it
+   * once is probably writing several templates in a row. */
+  _examplesHtml() {
+    const row = (cells) => `<div class="exrow">${cells}</div>`;
+    return `<details class="cheat"${this._cheatOpen ? " open" : ""} data-cheat>
+        <summary>What you can write in Title, Detail, Status and Icon</summary>
+        <div class="cheatbody">
+          <div class="exhead">Placeholders <span class="dim">— reading
+            ${esc(EXAMPLE_ENTITY)}</span></div>
+          ${PLACEHOLDERS.map(([tpl, out, what]) => row(
+            `<code>${esc(tpl)}</code>` +
+            `<span class="exout">${esc(out)}</span>` +
+            `<span class="dim">${esc(what)}</span>`)).join("")}
+
+          <div class="exhead">Replacing <span class="dim">— a | inside the
+            braces runs s/pattern/replacement/flags on what was read</span></div>
+          ${FILTER_EXAMPLES.map(([tpl, from, to, what]) =>
+            `<div class="exblock"><code>${esc(tpl)}</code>` +
+            `<div class="exwas">${esc(from)} <span class="dim">→</span> ` +
+            `<span class="exout">${esc(to)}</span></div>` +
+            `<div class="dim">${esc(what)}</div></div>`).join("")}
+
+          <div class="hint">Only the first | separates, so a pattern may have
+            alternation in it: <code>s/a|b//</code> is one replacement, not two.
+            After the last slash, <b>i</b> ignores case and <b>g</b> replaces
+            every match instead of the first. There is no case conversion —
+            <code>\\U</code> is just two characters.<br>
+            <b>{name}</b> joins the parts of a piped name with <b>·</b>, which
+            is why these patterns look for one. A pattern that will not compile
+            leaves the text alone and says so in the browser console.</div>
+        </div>
+      </details>`;
   }
 
   _groupOf(d) {
@@ -1779,7 +1958,7 @@ class HomeEventsPanel extends HTMLElement {
         return this._el.pane.querySelector(".secrow:last-of-type .secname").focus();
       case "showmatches":
         this._showMatches = !this._showMatches;
-        return this._recount();
+        return this._recount();  // the list, not the row: the preview is unchanged
       case "menu":
         return this.dispatchEvent(
           new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })
@@ -1841,7 +2020,7 @@ class HomeEventsPanel extends HTMLElement {
        * a value in a field that is already there and must not take the focus
        * away mid-word. */
       if (field === "condition" || field === "mode") this._renderPane();
-      else this._recount();
+      else this._reflect();
       return;
     }
     if (!el || !el.dataset || !el.dataset.set) {
@@ -1926,8 +2105,12 @@ class HomeEventsPanel extends HTMLElement {
       d[path] = value;
     }
 
+    /* Every field is worth reflecting, not only the ones the counts are
+     * about: a wording typed into Title changes the row below it. Both halves
+     * of _reflect leave immediately when the thing they draw into is not on
+     * this tab, so asking always is cheaper than working out who to ask. */
     if (structural) this._renderPane();
-    else if (el && el.dataset.set.indexOf("include") === 0) this._recount();
+    else this._reflect();
   }
 
   /* --------------------------------------------------------------- saving */
@@ -2394,6 +2577,42 @@ textarea.yaml {
 .mrow .msep { flex: none; color: var(--secondary-text-color); }
 .mrow .mid { flex: 0 2 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+
+/* The preview sits on the panel's own background rather than on a field, so
+   the card inside it looks like a card on a dashboard and not like a control
+   in this form. */
+.previewbox {
+  border: 1px dashed var(--divider-color, rgba(127,127,127,.35));
+  border-radius: 10px; padding: 10px; min-height: 44px;
+  background: var(--primary-background-color, transparent);
+}
+.previewbox .hint { padding-top: 0; }
+.previewbox .prevnote { padding-top: 8px; }
+
+/* The syntax, at the bottom of the tab that uses it. Shut until it is wanted:
+   it is a reference, and a reference that is always open is a wall. */
+.cheat { margin: 18px 0 4px; border-top: 1px solid var(--divider-color, rgba(127,127,127,.18));
+  padding-top: 12px; }
+.cheat summary { cursor: pointer; font-size: 13px; color: var(--secondary-text-color);
+  list-style: none; display: flex; align-items: center; gap: 7px; }
+.cheat summary::-webkit-details-marker { display: none; }
+.cheat summary::before { content: "▸"; font-size: 11px; }
+.cheat[open] summary::before { content: "▾"; }
+.cheat summary:hover { color: var(--primary-text-color); }
+.cheatbody { padding: 10px 0 0 18px; }
+.exhead { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--secondary-text-color); padding: 12px 0 6px; }
+.exhead .dim { text-transform: none; letter-spacing: 0; font-size: 12px; }
+/* Three columns: what you write, what it comes out as, what that means. The
+   template column is sized to the longest of them so the arrows line up. */
+.exrow { display: grid; grid-template-columns: 260px minmax(0, 190px) minmax(0, 1fr);
+  gap: 14px; align-items: baseline; padding: 2px 0; font-size: 13px; }
+.exrow code, .exblock code { font-family: var(--ha-font-family-code, monospace);
+  font-size: 12px; color: var(--primary-text-color); overflow-wrap: anywhere; }
+.exout { color: var(--success-color, #5cb87f); }
+.exblock { padding: 6px 0; }
+.exwas { font-size: 13px; padding-top: 3px; }
+.cheat .hint code { font-family: var(--ha-font-family-code, monospace); font-size: 12px; }
 
 .msg { min-height: 20px; padding-top: 8px; font-size: 13px; flex: none;
   color: var(--secondary-text-color); white-space: pre-wrap; }
