@@ -65,12 +65,12 @@ BOOL_KEYS = ["enabled", "show_time"]
 TEXT_KEYS = ["category", "title", "detail", "status", "icon", "severity", "time_mode"]
 
 
-class InvalidPreset(Exception):
-    """A preset that would not survive being handed to the card."""
+class InvalidLibrary(Exception):
+    """A library that would not survive being handed to the card."""
 
 
 def _fail(message: str) -> None:
-    raise InvalidPreset(message)
+    raise InvalidLibrary(message)
 
 
 def _kind(value: Any) -> str:
@@ -206,18 +206,18 @@ def _ordered(event: dict) -> dict:
     return out
 
 
-def validate_preset(data: Any) -> dict:
-    """Return the preset as it will be stored, or raise InvalidPreset."""
+def validate_library(data: Any) -> dict:
+    """Return the library as it will be stored, or raise InvalidLibrary."""
     if not _is_map(data):
-        _fail(f"A preset is a mapping with \"events\" in it, but this is "
+        _fail(f"A library is a mapping with \"events\" in it, but this is "
               f"{_kind(data)}.")
 
     unknown = [k for k in data
-               if k not in ("name", "sort", "non_areas", "categories", "events")]
+               if k not in ("sort", "non_areas", "categories", "events")]
     if unknown:
-        _fail("Unknown key(s) in the preset: " + ", ".join(unknown)
-              + '. A preset holds "name", "sort", "non_areas", "categories" '
-              'and "events".')
+        _fail("Unknown key(s) in the library: " + ", ".join(unknown)
+              + '. A library holds "sort", "non_areas", "categories" and '
+              '"events".')
 
     # How the rows in a section read, for every section that does not say
     # otherwise. A card that states its own `sort` keeps it; this is what a
@@ -235,7 +235,7 @@ def validate_preset(data: Any) -> dict:
 
     events = data.get("events")
     if events is None:
-        _fail('The preset needs an "events" mapping, even an empty one.')
+        _fail('The library needs an "events" mapping, even an empty one.')
     if not _is_map(events):
         _fail("Events are a mapping of name to event, not "
               f"{_kind(events)}. The name is how a card refers to one event.")
@@ -262,11 +262,10 @@ def validate_preset(data: Any) -> dict:
                   "of: " + ", ".join(SORT_MODES) + ".")
 
     out = {
-        "name": data.get("name") or "",
         "categories": categories,
         "events": {name: _ordered(event) for name, event in events.items()},
     }
-    # Only when it says something: a preset that has never been given a
+    # Only when it says something: a library that has never been given a
     # default should not grow a key saying it has none.
     if data.get("sort"):
         out["sort"] = data["sort"]

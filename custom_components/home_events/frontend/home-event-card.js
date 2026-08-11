@@ -130,8 +130,6 @@
  *
  *   type: custom:home-event-card       (required, and sufficient)
  *
- *   preset:          which library to draw. Default "default". Its events,
- *                    its sections and its `sort` all come from there
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name. Overrides whatever the library
  *                    says; leave it out to follow the library
@@ -168,15 +166,16 @@
  *                    the user's language.
  *
  * `events`, `categories`, `include`, `exclude`, `conditions` and `non_areas`
- * were card options once. They are the library's now, and a card that still
- * carries one says so rather than ignoring it.
+ * were card options once. They are the library's now. `preset` named which
+ * library to draw, and there is one. A card that still carries any of them
+ * says so rather than ignoring it.
  *
  * ---------------------------------------------------------------------------
  * The library
  *
- * A preset in .storage, written by the Home Events integration:
+ * One library in .storage, written by the Home Events integration and read by
+ * every card that draws from it:
  *
- *     name:        what to call it
  *     sort:        the default order for rows in a section
  *     non_areas:   registry areas that are filing cabinets rather than places,
  *                  by id or name. An entity in one is shown without a location
@@ -345,7 +344,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-10f";
+const CARD_BUILD = "2026-08-12a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -524,11 +523,6 @@ const DEFAULTS = {
    * the same kind of thing as the ones above them, and a glance panel that
    * says "4 more" without a way to see them is asking you to go elsewhere. */
   overflow: "scroll",
-  /* Which library this card draws. Events, sections and the house's own
-   * facts all live there and nowhere else: what this card configures is how
-   * that library reads on this dashboard, which is the only thing a card is
-   * in a position to know. */
-  preset: "default",
   /* A card that vanishes leaves a hole in a sections layout, and a hole reads
    * as a broken card rather than as a quiet house. Off by default. */
   hide_when_empty: false,
@@ -583,6 +577,8 @@ const MOVED = {
   conditions: "each event has its own When",
   non_areas: "`non_areas` is a fact about the house, so it lives in the library",
   empty_text: "write `text: {empty: ...}`",
+  preset: "there is one library and every card reads it, so there is nothing " +
+    "to name",
 };
 
 function mergeConfig(base, over) {
@@ -1556,7 +1552,7 @@ class HomeEventCard extends HTMLElement {
   /* Validate, compile, index. Everything the render path needs to answer
    * "which events might this entity belong to" without touching the config.
    *
-   * Separate from setConfig because a preset arrives later than the config
+   * Separate from setConfig because the library arrives later than the config
    * does: the card is built, drawn, and only then hears back from the Event
    * Manager. Running this again with the merged events is what makes that
    * second answer as good as the first. */
@@ -1677,56 +1673,51 @@ class HomeEventCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
-    this._fetchPreset();
+    this._fetchLibrary();
     this._loadRegistries();
     if (!this._built) this._build();
     this._render();
   }
 
-  /* The library, if this card was told to read one.
-
+  /* The library. There is one, and it is where every event comes from.
+   *
    * Asked for once, then followed: `home_events/subscribe` pushes on every
    * save, so an open dashboard changes as the panel is edited rather than at
    * the next reload. A failure is logged once and left there - a card that
    * blanks itself because an integration is missing is the worst of the
    * available failures, so what it already had goes on being drawn. */
-  _fetchPreset() {
-    if (this._presetAsked || !this._config.preset || !this._hass) return;
-    this._presetAsked = true;
+  _fetchLibrary() {
+    if (this._libraryAsked || !this._hass) return;
+    this._libraryAsked = true;
     const conn = this._hass.connection;
-    this._readPreset();
+    this._readLibrary();
     conn
-      .subscribeMessage(() => this._readPreset(), { type: "home_events/subscribe" })
+      .subscribeMessage(() => this._readLibrary(), { type: "home_events/subscribe" })
       .then((off) => {
-        this._presetOff = off;
+        this._libraryOff = off;
       })
       .catch(() => {});
   }
 
-  _readPreset() {
-    const name = this._config.preset;
+  _readLibrary() {
     this._hass.connection
-      .sendMessagePromise({ type: "home_events/preset", preset: name })
-      .then((res) => this._applyPreset(res))
+      .sendMessagePromise({ type: "home_events/library" })
+      .then((res) => this._applyLibrary(res))
       .catch((err) => {
         console.warn(
-          `home-event-card: could not read preset "${name}" - ` +
+          "home-event-card: could not read the event library - " +
             ((err && err.message) || err) +
-            ". Showing the events written on the card.",
+            ". Is the Home Events integration set up?",
         );
       });
   }
 
-  /* The preset's events, under anything the dashboard says itself.
+  /* What the library says, drawn the way this card is configured to draw it.
    *
-   * Inline wins the name on purpose: the library is the shared answer and the
-   * card is the local override, which is the direction people expect and the
-   * only one that lets a single dashboard differ without forking the library.
-   *
-   * A preset that will not compile is logged and dropped rather than thrown:
+   * A library that will not compile is logged and dropped rather than thrown:
    * it arrived from somewhere else, possibly while somebody was mid-edit, and
    * the card was rendering perfectly well a moment ago. */
-  _applyPreset(data) {
+  _applyLibrary(data) {
     const cfg = this._config;
     const events = data.events || {};
     /* Compiled onto a copy and only then committed. Compiling writes five keys
@@ -1737,7 +1728,7 @@ class HomeEventCard extends HTMLElement {
       this._compileEvents(next, events);
     } catch (err) {
       console.warn(
-        `home-event-card: preset "${cfg.preset}" was not usable - ` +
+        "home-event-card: the event library was not usable - " +
           ((err && err.message) || err),
       );
       return;
@@ -1918,10 +1909,10 @@ class HomeEventCard extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._presetOff) {
-      this._presetOff();
-      this._presetOff = null;
-      this._presetAsked = false;
+    if (this._libraryOff) {
+      this._libraryOff();
+      this._libraryOff = null;
+      this._libraryAsked = false;
     }
     if (this._timer) window.clearInterval(this._timer);
     this._timer = null;

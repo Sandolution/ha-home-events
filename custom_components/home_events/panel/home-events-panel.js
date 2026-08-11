@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-11k";
+const PANEL_BUILD = "2026-08-12a";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -141,11 +141,21 @@ const HELP = {
     "thing.",
   title: "The first line of the row. Left empty, the domain decides - a light " +
     "says its name, an alarm says the panel. {name}, {state} and {attr.x} are " +
-    "filled in from the entity.",
+    "filled in from the entity.\n\n" +
+    "A | inside the braces runs a replace on what was read, written as " +
+    "s/pattern/replacement/flags. So to drop the machine words integrations " +
+    "put on the end of a name:\n\n" +
+    "    {name|s/ · (State|Error|Status)$//}\n\n" +
+    "{name} joins the parts of a piped friendly name with · , which is why " +
+    "the pattern looks for one. Add words to the list to strip more; after " +
+    "the last slash, i ignores case and g replaces every match instead of " +
+    "only the first.",
   detail: "The quieter line beside the title. Usually the room, which is what " +
-    "it says if this is left empty.",
+    "it says if this is left empty. Same placeholders and the same " +
+    "s/pattern/replacement/ filter as Title.",
   status: "What the row says on the right: what the entity is doing. Left " +
-    "empty, the domain decides.",
+    "empty, the domain decides. Same placeholders and the same " +
+    "s/pattern/replacement/ filter as Title.",
   icon: "The icon at the start of the row. Left empty, the entity's own icon " +
     "is used, or the domain's.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
@@ -162,7 +172,7 @@ const HELP = {
     "countdowns always run soonest-first; this decides the rest.",
   sections: "The order sections read in, what each is called, and how each " +
     "one sorts its rows.",
-  library: "The whole preset as YAML - sections, defaults and every event. " +
+  library: "The whole library as YAML - sections, defaults and every event. " +
     "Paste one in to replace it.",
   newevent: "Start an event. It covers nothing until you say what it covers.",
 };
@@ -283,8 +293,7 @@ class HomeEventsPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
-    this._presets = {};
-    this._presetId = "default";
+    this._library = { events: {}, categories: [] };
     this._selected = null;
     this._renamedFrom = null;
     this._draft = null;
@@ -402,12 +411,8 @@ class HomeEventsPanel extends HTMLElement {
 
   async _load() {
     try {
-      const res = await this._ws({ type: "home_events/get" });
-      this._presets = res.presets || {};
-      if (!this._presets[this._presetId]) {
-        this._presetId = Object.keys(this._presets)[0] || "default";
-      }
-      this._renderShell();
+      this._library = await this._fresh();
+      this._renderList();
       const names = Object.keys(this._events());
       if (names.length) this._openEvent(names[0]);
       else this._newEvent();
@@ -417,22 +422,32 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   async _reload() {
-    const res = await this._ws({ type: "home_events/get" });
-    this._presets = res.presets || {};
+    this._library = await this._fresh();
     this._renderList();
     if (this._dirty) this._say("Changed elsewhere. Your edit is still here.");
   }
 
-  _preset() {
-    return this._presets[this._presetId] || { events: {}, categories: [] };
+  /* The library, asked for now rather than remembered: every write sends the
+   * whole of it back, and sending a copy that was read minutes ago would undo
+   * anything saved in between.
+   *
+   * `schema_version` comes off - that is the integration talking about
+   * itself, and writing it back would be a key the library has never heard
+   * of. */
+  async _fresh() {
+    const out = { ...(await this._ws({ type: "home_events/library" })) };
+    delete out.schema_version;
+    if (!out.events) out.events = {};
+    if (!out.categories) out.categories = [];
+    return out;
   }
 
   _events() {
-    return this._preset().events || {};
+    return this._library.events || {};
   }
 
   _categories() {
-    const declared = (this._preset().categories || []).map((c) => c.id);
+    const declared = (this._library.categories || []).map((c) => c.id);
     for (const e of Object.values(this._events())) {
       if (e.category && declared.indexOf(e.category) === -1) declared.push(e.category);
     }
@@ -447,7 +462,7 @@ class HomeEventsPanel extends HTMLElement {
     if (this._newCategory && this._newCategory.id === id) {
       return this._newCategory.label;
     }
-    const c = (this._preset().categories || []).find((x) => x.id === id);
+    const c = (this._library.categories || []).find((x) => x.id === id);
     return (c && c.label) || humanise(id);
   }
 
@@ -459,7 +474,6 @@ class HomeEventsPanel extends HTMLElement {
         <header class="bar">
           <button class="icon" data-act="menu" title="Sidebar">&#9776;</button>
           <div class="title" title="home-events-panel ${PANEL_BUILD}">Events</div>
-          <select class="preset"></select>
           <span class="grow"></span>
           <button class="ghost" data-act="sections" title="${esc(HELP.sections)}">Sections</button>
           <button class="ghost" data-act="library" title="${esc(HELP.library)}">Whole library</button>
@@ -490,7 +504,7 @@ class HomeEventsPanel extends HTMLElement {
     const $ = (s) => this.shadowRoot.querySelector(s);
     this._el = {
       list: $(".list"), name: $(".name"), pane: $(".pane"), msg: $(".msg"),
-      preset: $(".preset"), del: $('[data-act="delete"]'), tabs: $(".tabs"),
+      del: $('[data-act="delete"]'), tabs: $(".tabs"),
     };
 
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
@@ -505,21 +519,7 @@ class HomeEventsPanel extends HTMLElement {
     this._el.name.addEventListener("input", () => {
       this._setDirty(true);
     });
-    this._el.preset.addEventListener("change", (e) => {
-      this._presetId = e.target.value;
-      this._load();
-    });
     this._built = true;
-  }
-
-  _renderShell() {
-    const ids = Object.keys(this._presets);
-    this._el.preset.innerHTML = ids
-      .map((id) => `<option value="${esc(id)}"${id === this._presetId ? " selected" : ""}>` +
-        `${esc(this._presets[id].name || humanise(id))}</option>`)
-      .join("");
-    this._el.preset.style.display = ids.length > 1 ? "" : "none";
-    this._renderList();
   }
 
   _renderList() {
@@ -529,7 +529,7 @@ class HomeEventsPanel extends HTMLElement {
       this._el.list.innerHTML =
         `<div class="empty">Nothing here yet.<br><br>` +
         `<b>New event</b> starts one. <b>Whole library</b> takes a whole ` +
-        `preset pasted in as YAML.</div>`;
+        `library pasted in as YAML.</div>`;
       return;
     }
     const order = [];
@@ -542,7 +542,7 @@ class HomeEventsPanel extends HTMLElement {
       }
       buckets[cat].push(name);
     }
-    const declared = (this._preset().categories || []).map((c) => c.id);
+    const declared = (this._library.categories || []).map((c) => c.id);
     order.sort((a, b) => {
       const ia = declared.indexOf(a), ib = declared.indexOf(b);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
@@ -650,10 +650,10 @@ class HomeEventsPanel extends HTMLElement {
     this._selected = null;
     this._renamedFrom = null;
     this._draft = null;
-    /* Every section that exists: the ones the preset arranges, then the ones
+    /* Every section that exists: the ones the library arranges, then the ones
      * only an event has heard of, which is exactly the order a card puts them
      * in. Listing them is what makes them arrangeable. */
-    const declared = (this._preset().categories || []).map((c) => ({
+    const declared = (this._library.categories || []).map((c) => ({
       id: c.id, label: c.label || "", sort: c.sort || "",
     }));
     for (const id of this._categories()) {
@@ -668,8 +668,8 @@ class HomeEventsPanel extends HTMLElement {
       declared.push({ id: GENERIC_CATEGORY, label: "", sort: "" });
     }
     this._sections = declared;
-    this._presetSort = this._preset().sort || "";
-    this._el.name.value = this._preset().name || this._presetId;
+    this._defaultSort = this._library.sort || "";
+    this._el.name.value = "Sections";
     this._el.name.disabled = true;
     this._el.del.style.display = "none";
     this._el.tabs.style.display = "none";
@@ -696,7 +696,7 @@ class HomeEventsPanel extends HTMLElement {
             ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
               `${(c.sort || "") === o.key ? " selected" : ""}>` +
               `${esc(o.key ? o.label
-                : this._presetSort ? "Same as above" : "As the card says")}</option>`).join("")}
+                : this._defaultSort ? "Same as above" : "As the card says")}</option>`).join("")}
           </select>
           <span class="dim count-of">${used} ${used === 1 ? "event" : "events"}</span>
           <button class="mv" data-act="secup" data-index="${i}" title="Move up"
@@ -713,9 +713,9 @@ class HomeEventsPanel extends HTMLElement {
         <div class="crits wide">
           <div class="secrow head">
             <span class="dim"${tip("sort")}>Rows read, unless a section says otherwise</span>
-            <select data-presetsort>
+            <select data-defaultsort>
               ${SORTS.map((o) => `<option value="${esc(o.key)}"` +
-                `${this._presetSort === o.key ? " selected" : ""}>` +
+                `${this._defaultSort === o.key ? " selected" : ""}>` +
                 `${esc(o.key ? o.label : "As the card says")}</option>`).join("")}
             </select>
             <span></span><span></span><span></span><span></span>
@@ -730,15 +730,13 @@ class HomeEventsPanel extends HTMLElement {
   }
 
   async _saveSections() {
-    const res = await this._ws({ type: "home_events/get" });
-    const preset = clone((res.presets || {})[this._presetId]);
-    if (!preset) return;
+    const library = await this._fresh();
     /* A row that was added and never named has nothing to arrange, and two
        rows that ended up with one id would be one section twice. */
     const seen = new Set();
-    if (this._presetSort) preset.sort = this._presetSort;
-    else delete preset.sort;
-    preset.categories = this._sections.filter((c) => {
+    if (this._defaultSort) library.sort = this._defaultSort;
+    else delete library.sort;
+    library.categories = this._sections.filter((c) => {
       if (!c.id || seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
@@ -748,9 +746,7 @@ class HomeEventsPanel extends HTMLElement {
       if (c.sort) out.sort = c.sort;
       return out;
     });
-    await this._ws({
-      type: "home_events/save", preset: this._presetId, data: preset,
-    });
+    await this._ws({ type: "home_events/save", data: library });
     this._setDirty(false);
     await this._reload();
     this._say("Saved");
@@ -759,18 +755,18 @@ class HomeEventsPanel extends HTMLElement {
   async _openLibrary() {
     if (!(await this._confirmDiscard())) return;
     try {
-      const res = await this._ws({ type: "home_events/export", preset: this._presetId });
+      const res = await this._ws({ type: "home_events/export" });
       this._mode = "library";
       this._selected = null;
       this._renamedFrom = null;
       this._draft = null;
-      this._el.name.value = this._preset().name || this._presetId;
+      this._el.name.value = "Whole library";
       this._el.name.disabled = true;
       this._el.del.style.display = "none";
       this._el.tabs.style.display = "none";
       this._setDirty(false);
       this._renderPane(res.yaml);
-      this._say("The whole preset, categories and all. Paste one in to replace it.");
+      this._say("The whole library, categories and all. Paste one in to replace it.");
       this._renderList();
     } catch (err) {
       this._say(this._reason(err), true);
@@ -803,7 +799,7 @@ class HomeEventsPanel extends HTMLElement {
     }
     try {
       const res = await this._ws({
-        type: "home_events/export", preset: this._presetId, event: this._selected,
+        type: "home_events/export", event: this._selected,
       });
       this._mode = "yaml";
       this._setDirty(false);
@@ -1006,7 +1002,8 @@ class HomeEventsPanel extends HTMLElement {
   _conditionsHtml(conditions, path = "") {
     const list = Array.isArray(conditions) ? conditions : [];
     const rows = list
-      .map((c, i) => this._condHtml(c, path === "" ? String(i) : `${path}.${i}`))
+      .map((c, i) => this._condHtml(c, path === "" ? String(i) : `${path}.${i}`,
+        { first: i === 0, last: i === list.length - 1, alone: list.length < 2 }))
       .join("");
     const empty = list.length ? "" : path === ""
       ? `<div class="hint">No conditions, so this event shows every entity it
@@ -1022,7 +1019,7 @@ class HomeEventsPanel extends HTMLElement {
       `+ Add condition</button>`;
   }
 
-  _condHtml(c, path) {
+  _condHtml(c, path, where) {
     const kind = c.condition;
     const pick = (name, value, options) =>
       `<select data-cond="${path}:${name}">` +
@@ -1058,28 +1055,62 @@ class HomeEventsPanel extends HTMLElement {
                    ["not", "None of"]];
     if (!kinds.some(([k]) => k === kind)) kinds.push([kind, humanise(kind)]);
 
-    const remove = `<button class="x row-x" data-act="delcond" ` +
-      `data-path="${path}" title="Remove this condition">×</button>`;
+    /* The arrows and the cross, kept together at the right-hand end of the
+     * row. Conditions are read down the page in the order they are written -
+     * and inside a group that order is the argument itself - so being able to
+     * move one is the same need the filter above has. A row on its own has
+     * nowhere to go, so it gets no arrows. */
+    const move = where && !where.alone
+      ? `<button class="mv" data-act="condup" data-path="${path}" title="Move up"
+                 ${where.first ? "disabled" : ""}>↑</button>
+         <button class="mv" data-act="conddown" data-path="${path}" title="Move down"
+                 ${where.last ? "disabled" : ""}>↓</button>`
+      : "";
+    const acts = `<span class="acts">${move}` +
+      `<button class="x row-x" data-act="delcond" data-path="${path}" ` +
+      `title="Remove this condition">×</button></span>`;
 
     /* A group is a row that holds rows. The word on it says how what is inside
      * adds up, and what is inside is drawn by the same code as everything
      * else, one level in. */
     if (GROUP_KINDS.indexOf(kind) !== -1) {
       return `<div class="group">
-          <div class="cond ghead">${pick("condition", kind, kinds)}
+          <div class="cond ghead"><span class="fields">
+            ${pick("condition", kind, kinds)}
             <span class="lbl">${kind === "not"
               ? "of these may be true" : "of these"}</span>
-            <span class="grow"></span>${remove}</div>
+          </span>${acts}</div>
           <div class="subconds">${this._conditionsHtml(c.conditions, path)}</div>
         </div>`;
     }
 
-    return `<div class="cond">` +
+    /* The fields wrap; the arrows and the cross do not. A numeric-state
+     * condition is five controls wide and will not fit a narrow panel on one
+     * line, and arrows that went over the fold with them would be a reorder
+     * control that moves about. */
+    return `<div class="cond"><span class="fields">` +
       pick("condition", kind, kinds) + body +
       (kind === "state" || kind === "numeric_state"
         ? `<span class="lbl">for</span>` + text("for", durationText(c.for), "0:05:00", "num")
         : "") +
-      `<span class="grow"></span>${remove}</div>`;
+      `</span>` + acts + `</div>`;
+  }
+
+  /* Moving a condition, among the ones it sits with.
+   *
+   * Only among its siblings: an arrow that lifted a row out of an "any of"
+   * group would change what the event means, and nothing about an arrow says
+   * it might. Crossing a group boundary is a delete and an add. */
+  _moveCond(path, delta) {
+    const parts = String(path).split(".");
+    const index = Number(parts.pop());
+    const list = this._condListAt(parts.join("."));
+    if (!list) return;
+    const to = index + delta;
+    if (to < 0 || to >= list.length) return;
+    list.splice(to, 0, list.splice(index, 1)[0]);
+    this._setDirty(true);
+    this._renderPane();
   }
 
   /* Where a path points, and the list it lives in.
@@ -1577,7 +1608,10 @@ class HomeEventsPanel extends HTMLElement {
       (n && this._showMatches ? this._matchesHtml(passing) : "");
   }
 
-  /* Every entity, by room, with the state it is in.
+  /* Every entity, by room: what it is called, what to call it in a condition,
+   * and the state it is in - in that order, on one line, reading from the
+   * left. Three columns pushed apart across a wide panel made the state a
+   * thing to go and find; a sentence does not.
    *
    * The state is the raw one, not the humanised one: it is there to be typed
    * into a condition on the tab next door, and a condition matches `heat`,
@@ -1597,9 +1631,10 @@ class HomeEventsPanel extends HTMLElement {
       `<div class="mroom">${esc(area)} <span class="dim">(${rows.length})</span></div>` +
       rows.slice(0, 40).map(([id, name, state]) =>
         `<div class="mrow"><span class="mname">${esc(name)}</span>` +
+        `<code class="mid">(${esc(id)})</code>` +
+        `<span class="msep">-</span>` +
         `<code class="mstate" title="The state right now, as a condition would ` +
-        `have to spell it">${esc(state == null ? "?" : state)}</code>` +
-        `<code class="mid">${esc(id)}</code></div>`).join("") +
+        `have to spell it">${esc(state == null ? "?" : state)}</code></div>`).join("") +
       (rows.length > 40 ? `<div class="mrow dim">and ${rows.length - 40} more</div>` : "")
     ).join("") + `</div>`;
   }
@@ -1653,6 +1688,10 @@ class HomeEventsPanel extends HTMLElement {
       case "critdown":
         return this._moveCrit(el.dataset.side, el.dataset.dim,
           Number(el.dataset.index), el.dataset.act === "critup" ? -1 : 1);
+      case "condup":
+      case "conddown":
+        return this._moveCond(el.dataset.path,
+          el.dataset.act === "condup" ? -1 : 1);
       case "editcrit":
         this._editing = {
           type: "crit", side: el.dataset.side, dim: el.dataset.dim,
@@ -1759,8 +1798,8 @@ class HomeEventsPanel extends HTMLElement {
       this._editing = { type: "crit", side: el.dataset.side, dim, index: null };
       return this._renderPane();
     }
-    if (el && el.dataset && el.dataset.presetsort !== undefined) {
-      this._presetSort = el.value;
+    if (el && el.dataset && el.dataset.defaultsort !== undefined) {
+      this._defaultSort = el.value;
       this._setDirty(true);
       /* The sections below read "same as above" or "as the card says"
        * depending on this, so they are redrawn with it. */
@@ -1916,23 +1955,15 @@ class HomeEventsPanel extends HTMLElement {
     return draft;
   }
 
-  /* Put a newly named section in the preset, keeping the spelling.
-   *
-   * The preset is fetched again rather than taken from the cache: this writes
-   * the whole of it back, and writing back a copy that was read minutes ago
-   * would undo anything saved in between. */
+  /* Put a newly named section in the library, keeping the spelling. */
   async _writeCategory() {
     const pending = this._newCategory;
     if (!pending) return;
-    const res = await this._ws({ type: "home_events/get" });
-    const preset = clone((res.presets || {})[this._presetId]);
-    if (!preset) return;
-    const cats = preset.categories || (preset.categories = []);
+    const library = await this._fresh();
+    const cats = library.categories || (library.categories = []);
     if (!cats.some((c) => c.id === pending.id)) {
       cats.push({ id: pending.id, label: pending.label });
-      await this._ws({
-        type: "home_events/save", preset: this._presetId, data: preset,
-      });
+      await this._ws({ type: "home_events/save", data: library });
     }
     this._newCategory = null;
   }
@@ -1947,7 +1978,7 @@ class HomeEventsPanel extends HTMLElement {
       if (this._mode === "sections") return await this._saveSections();
       if (this._mode === "library") {
         const text = this._el.pane.querySelector(".yaml").value;
-        await this._ws({ type: "home_events/import", preset: this._presetId, yaml: text });
+        await this._ws({ type: "home_events/import", yaml: text });
         this._setDirty(false);
         await this._reload();
         this._say("Saved");
@@ -1961,12 +1992,12 @@ class HomeEventsPanel extends HTMLElement {
         ? this._el.pane.querySelector(".yaml").value
         : JSON.stringify(this._cleaned(), null, 2);
       const msg = {
-        type: "home_events/save_event", preset: this._presetId, name, yaml: text,
+        type: "home_events/save_event", name, yaml: text,
       };
       if (this._renamedFrom && this._renamedFrom !== name) msg.rename_from = this._renamedFrom;
       /* A section named while writing this event exists once the event does,
        * and not before. It goes first: an event landing in a section the
-       * preset has never heard of would read by its id until the next write. */
+       * library has never heard of would read by its id until the next write. */
       await this._writeCategory();
       await this._ws(msg);
       this._selected = name;
@@ -1988,7 +2019,7 @@ class HomeEventsPanel extends HTMLElement {
     if (!ask(`Delete the event "${this._selected}"?`)) return;
     try {
       await this._ws({
-        type: "home_events/delete_event", preset: this._presetId, name: this._selected,
+        type: "home_events/delete_event", name: this._selected,
       });
       this._setDirty(false);
       await this._reload();
@@ -2301,10 +2332,14 @@ textarea.yaml {
 .pair span { font-size: 11px; color: var(--secondary-text-color); }
 .check { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; }
 
-.cond { display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
+/* Two parts: the controls, which wrap, and the arrows, which stay at the
+   right-hand end however many lines the controls take. */
+.cond { display: flex; gap: 7px; align-items: center;
   border: 1px solid var(--divider-color, rgba(127,127,127,.25));
   border-radius: 9px; padding: 7px 10px; margin-bottom: 7px; }
-.cond .grow { flex: 1; }
+.cond > .fields { flex: 1 1 auto; min-width: 0;
+  display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.cond > .acts { flex: none; display: flex; align-items: center; gap: 1px; }
 
 /* A group of conditions: the word that says how they add up, and the rail
    under it holding what it applies to. The rail is what makes the nesting
@@ -2319,13 +2354,21 @@ textarea.yaml {
 }
 .group > .subconds > .hint { padding-bottom: 6px; }
 .cond select, .cond .cv {
-  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 7px;
+  font: inherit; font-size: 13px; padding: 6px 9px; border-radius: 7px;
+  box-sizing: border-box;
   background: var(--card-background-color, transparent); color: inherit;
   border: 1px solid var(--divider-color, rgba(127,127,127,.3));
 }
-.cond .cv { width: 150px; }
-.cond .cv.num { width: 78px; }
-.cond .cv.narrow { width: 110px; }
+/* The value is the long one - "No error, Standby, Idle, Inactive" is a real
+   thing to write in it - so it takes the room the row has going spare, up to
+   the point where a text box stops being readable. The fixed ones are sized
+   to what actually goes in them: 0:05:00, 23:00:00, a weekday or two. */
+/* min-width as well as the basis on the fixed ones: without it they inherit
+   the value field's floor and a numeric-state row - attribute, above, below,
+   for - is wide enough to wrap onto a second line. */
+.cond .cv { flex: 1 1 220px; min-width: 130px; max-width: 380px; }
+.cond .cv.num { flex: 0 0 96px; min-width: 96px; }
+.cond .cv.narrow { flex: 0 0 150px; min-width: 150px; }
 .cond .lbl { font-size: 12px; color: var(--secondary-text-color); }
 .hint { font-size: 12.5px; color: var(--secondary-text-color); padding-top: 6px; line-height: 1.5; }
 
@@ -2336,15 +2379,21 @@ textarea.yaml {
   padding-top: 8px; max-height: 260px; overflow: auto; }
 .mroom { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--secondary-text-color); padding: 10px 0 4px; }
-.mrow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
-  gap: 16px; align-items: baseline; font-size: 13px; padding: 2px 0; }
-.mrow .mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One line, left to right, nothing pushed to an edge: name, id, state. Only
+   the first two give way when the panel is narrow, and the id gives way first
+   - the state is the thing being read. */
+.mrow { display: flex; gap: 6px; align-items: baseline; font-size: 13px;
+  padding: 2px 0; }
+.mrow .mname { flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
 .mrow code { font-family: var(--ha-font-family-code, monospace); font-size: 11.5px;
   color: var(--secondary-text-color); }
 /* The state is what the tab next door is being written about, so it reads as
    a value rather than as a footnote. */
-.mrow .mstate { color: var(--primary-text-color); white-space: nowrap; }
-.mrow .mid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mrow .mstate { flex: none; color: var(--primary-text-color); white-space: nowrap; }
+.mrow .msep { flex: none; color: var(--secondary-text-color); }
+.mrow .mid { flex: 0 2 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
 
 .msg { min-height: 20px; padding-top: 8px; font-size: 13px; flex: none;
   color: var(--secondary-text-color); white-space: pre-wrap; }

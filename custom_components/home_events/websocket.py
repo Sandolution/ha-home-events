@@ -1,9 +1,9 @@
 """The API the panel and the cards talk to.
 
-Ten commands. Eight of them are admin-only because they write, or because
-they hand out the whole library; `preset` and `subscribe` are not, because a
-card runs as whoever is looking at the dashboard and a wall tablet is rarely
-an administrator.
+Eight commands. Six of them are admin-only because they write; `library` and
+`subscribe` are not, because a card runs as whoever is looking at the dashboard
+and a wall tablet is rarely an administrator. Reading the library needs no
+privilege that reading the dashboard drawn from it does not.
 
 YAML lives here rather than in the panel. Parsing it in the browser would mean
 shipping a parser and trusting it, and the panel would then have two ideas of
@@ -25,13 +25,13 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DEFAULT_PRESET, DOMAIN, SCHEMA_VERSION, SIGNAL_UPDATED
-from .schema import InvalidPreset
+from .const import DOMAIN, SCHEMA_VERSION, SIGNAL_UPDATED
+from .schema import InvalidLibrary
 from .store import HomeEventsStore
 
 _LOGGER = logging.getLogger(__name__)
 
-ERR_INVALID = "invalid_preset"
+ERR_INVALID = "invalid_library"
 ERR_NOT_FOUND = "not_found"
 ERR_NOT_LOADED = "not_loaded"
 
@@ -61,44 +61,21 @@ def _dump(data: Any) -> str:
                           default_flow_style=False, width=100)
 
 
-@websocket_api.require_admin
-@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/get"})
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/library"})
 @callback
-def ws_get(hass: HomeAssistant, connection, msg: dict) -> None:
-    """Everything the panel needs to draw itself."""
+def ws_library(hass: HomeAssistant, connection, msg: dict) -> None:
+    """The library: everything a card draws and everything the panel edits."""
     if (store := _store(hass, connection, msg)) is None:
         return
     connection.send_result(msg["id"], {
         "schema_version": SCHEMA_VERSION,
-        "presets": store.presets,
-    })
-
-
-@websocket_api.websocket_command({
-    vol.Required("type"): f"{DOMAIN}/preset",
-    vol.Optional("preset", default=DEFAULT_PRESET): str,
-})
-@callback
-def ws_preset(hass: HomeAssistant, connection, msg: dict) -> None:
-    """One preset, for a card. Not admin-only: cards run as the viewer."""
-    if (store := _store(hass, connection, msg)) is None:
-        return
-    preset = store.preset(msg["preset"])
-    if preset is None:
-        connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"No preset named {msg['preset']!r}.")
-        return
-    connection.send_result(msg["id"], {
-        "schema_version": SCHEMA_VERSION,
-        "preset": msg["preset"],
-        **preset,
+        **store.library,
     })
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/save",
-    vol.Required("preset"): str,
     vol.Required("data"): dict,
 })
 @websocket_api.async_response
@@ -106,61 +83,42 @@ async def ws_save(hass: HomeAssistant, connection, msg: dict) -> None:
     if (store := _store(hass, connection, msg)) is None:
         return
     try:
-        saved = await store.async_save_preset(msg["preset"], msg["data"])
-    except InvalidPreset as err:
+        saved = await store.async_save(msg["data"])
+    except InvalidLibrary as err:
         connection.send_error(msg["id"], ERR_INVALID, str(err))
         return
-    connection.send_result(msg["id"], {"preset": msg["preset"], **saved})
-
-
-@websocket_api.require_admin
-@websocket_api.websocket_command({
-    vol.Required("type"): f"{DOMAIN}/delete",
-    vol.Required("preset"): str,
-})
-@websocket_api.async_response
-async def ws_delete(hass: HomeAssistant, connection, msg: dict) -> None:
-    if (store := _store(hass, connection, msg)) is None:
-        return
-    await store.async_delete_preset(msg["preset"])
-    connection.send_result(msg["id"], {"presets": store.presets})
+    connection.send_result(msg["id"], saved)
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/export",
-    vol.Optional("preset", default=DEFAULT_PRESET): str,
     vol.Optional("event"): str,
 })
 @callback
 def ws_export(hass: HomeAssistant, connection, msg: dict) -> None:
-    """The whole preset as YAML, or one event of it.
+    """The whole library as YAML, or one event of it.
 
     One event is what the panel edits: a dozen lines is a thing a person can
     read in one go, where the whole library is a thing they scroll.
     """
     if (store := _store(hass, connection, msg)) is None:
         return
-    preset = store.preset(msg["preset"])
-    if preset is None:
-        connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"No preset named {msg['preset']!r}.")
-        return
+    library = store.library
     if "event" in msg:
-        event = preset["events"].get(msg["event"])
+        event = library["events"].get(msg["event"])
         if event is None:
             connection.send_error(msg["id"], ERR_NOT_FOUND,
                                   f"No event named {msg['event']!r}.")
             return
         connection.send_result(msg["id"], {"yaml": _dump(event)})
         return
-    connection.send_result(msg["id"], {"yaml": _dump(preset)})
+    connection.send_result(msg["id"], {"yaml": _dump(library)})
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/save_event",
-    vol.Required("preset"): str,
     vol.Required("name"): str,
     vol.Required("yaml"): str,
     vol.Optional("rename_from"): str,
@@ -169,17 +127,13 @@ def ws_export(hass: HomeAssistant, connection, msg: dict) -> None:
 async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
     """One event, written as text and merged into the library.
 
-    The whole preset is validated afterwards, not just the event: a rename
+    The whole library is validated afterwards, not just the event: a rename
     that orphans a category, or an event that now collides with another name,
     is a fact about the library rather than about the lines just typed.
     """
     if (store := _store(hass, connection, msg)) is None:
         return
-    preset = store.preset(msg["preset"])
-    if preset is None:
-        connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"No preset named {msg['preset']!r}.")
-        return
+    library = store.library
 
     name = msg["name"].strip()
     if not name:
@@ -204,7 +158,7 @@ async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
     old = msg.get("rename_from")
     events: dict[str, Any] = {}
     replaced = False
-    for key, value in preset["events"].items():
+    for key, value in library["events"].items():
         if key == (old or name):
             events[name] = event
             replaced = True
@@ -215,39 +169,32 @@ async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
     if not replaced:
         events[name] = event
 
-    data = {**preset, "events": events}
     try:
-        saved = await store.async_save_preset(msg["preset"], data)
-    except InvalidPreset as err:
+        saved = await store.async_save({**library, "events": events})
+    except InvalidLibrary as err:
         connection.send_error(msg["id"], ERR_INVALID, str(err))
         return
-    connection.send_result(msg["id"], {"preset": msg["preset"], **saved})
+    connection.send_result(msg["id"], saved)
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/delete_event",
-    vol.Required("preset"): str,
     vol.Required("name"): str,
 })
 @websocket_api.async_response
 async def ws_delete_event(hass: HomeAssistant, connection, msg: dict) -> None:
     if (store := _store(hass, connection, msg)) is None:
         return
-    preset = store.preset(msg["preset"])
-    if preset is None:
-        connection.send_error(msg["id"], ERR_NOT_FOUND,
-                              f"No preset named {msg['preset']!r}.")
-        return
-    events = {k: v for k, v in preset["events"].items() if k != msg["name"]}
-    saved = await store.async_save_preset(msg["preset"], {**preset, "events": events})
-    connection.send_result(msg["id"], {"preset": msg["preset"], **saved})
+    library = store.library
+    events = {k: v for k, v in library["events"].items() if k != msg["name"]}
+    saved = await store.async_save({**library, "events": events})
+    connection.send_result(msg["id"], saved)
 
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/import",
-    vol.Required("preset"): str,
     vol.Required("yaml"): str,
 })
 @websocket_api.async_response
@@ -267,11 +214,11 @@ async def ws_import(hass: HomeAssistant, connection, msg: dict) -> None:
                               f"That is not valid YAML. {err}")
         return
     try:
-        saved = await store.async_save_preset(msg["preset"], data)
-    except InvalidPreset as err:
+        saved = await store.async_save(data)
+    except InvalidLibrary as err:
         connection.send_error(msg["id"], ERR_INVALID, str(err))
         return
-    connection.send_result(msg["id"], {"preset": msg["preset"], **saved})
+    connection.send_result(msg["id"], saved)
 
 
 @websocket_api.require_admin
@@ -285,7 +232,7 @@ def ws_parse(hass: HomeAssistant, connection, msg: dict) -> None:
 
     The form editor draws what it can and leaves the rest as YAML in place - a
     nested and/or group, say. Those islands still have to become structure
-    before the preset can be saved, and there is one parser in this system, so
+    before the library can be saved, and there is one parser in this system, so
     they become structure here rather than in a second one written in
     JavaScript.
     """
@@ -308,10 +255,8 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
     """Push on every save, so an open dashboard follows the panel."""
 
     @callback
-    def forward(preset_id: str) -> None:
-        connection.send_message(websocket_api.event_message(
-            msg["id"], {"preset": preset_id}
-        ))
+    def forward() -> None:
+        connection.send_message(websocket_api.event_message(msg["id"], {}))
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(
         hass, SIGNAL_UPDATED, forward
@@ -321,7 +266,6 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
-    for handler in (ws_get, ws_preset, ws_save, ws_delete, ws_export,
-                    ws_import, ws_save_event, ws_delete_event, ws_parse,
-                    ws_subscribe):
+    for handler in (ws_library, ws_save, ws_export, ws_import, ws_save_event,
+                    ws_delete_event, ws_parse, ws_subscribe):
         websocket_api.async_register_command(hass, handler)

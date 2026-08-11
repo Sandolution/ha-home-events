@@ -3,14 +3,15 @@
 DOMAIN = "home_events"
 VERSION = "0.1.0"
 
-# The store holds one library of events, split into presets so a wall tablet
-# can show a different set from the phone without a second copy of the rules.
+# The store holds one library of events, and one is all it holds. Version 1
+# nested it under a "presets" mapping so a wall tablet could draw a different
+# set from the phone; nothing was ever able to create a second one, so version
+# 2 lifts the single library to the top and store.py migrates on load.
 STORAGE_KEY = DOMAIN
-STORAGE_VERSION = 1
-DEFAULT_PRESET = "default"
+STORAGE_VERSION = 2
 
 # What a card is told to expect. The card carries the same number and says so
-# in the panel when the two disagree, because a preset written against a newer
+# in the panel when the two disagree, because a library written against a newer
 # schema silently losing keys is the failure mode with no symptom.
 SCHEMA_VERSION = 1
 
