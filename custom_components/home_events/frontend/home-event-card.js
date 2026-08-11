@@ -122,6 +122,8 @@
  * ---------------------------------------------------------------------------
  * Config
  *
+ * Full reference: home-event-card.md, beside this file.
+ *
  * Two places, and the line between them is the point: the library says what
  * the house is watching, and the card says how that library reads on this
  * dashboard. Everything about events - what they cover, when they apply, how
