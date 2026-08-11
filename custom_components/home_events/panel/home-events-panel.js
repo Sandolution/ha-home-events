@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12c";
+const PANEL_BUILD = "2026-08-12d";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -547,7 +547,10 @@ class HomeEventsPanel extends HTMLElement {
       <div class="app">
         <header class="bar">
           <button class="icon" data-act="menu" title="Sidebar">&#9776;</button>
-          <div class="title" title="home-events-panel ${PANEL_BUILD}">Events</div>
+          <div class="title">Events<span class="build" title="The build this
+            page is running. Home Assistant fetches a panel module once per
+            page load, so an edit to the panel is invisible until a full
+            reload - Ctrl-Shift-R, or Cmd-Shift-R.">${PANEL_BUILD}</span></div>
           <span class="grow"></span>
           <button class="ghost" data-act="sections" title="${esc(HELP.sections)}">Sections</button>
           <button class="ghost" data-act="library" title="${esc(HELP.library)}">Whole library</button>
@@ -2362,7 +2365,15 @@ const STYLES = `
   background: var(--app-header-background-color, var(--primary-color));
   color: var(--app-header-text-color, #fff);
 }
-.title { font-size: 20px; }
+.title { font-size: 20px; display: flex; align-items: baseline; gap: 9px; }
+/* Readable without hovering, and quiet enough not to be part of the title.
+   A panel that has been updated and not reloaded looks exactly like a panel
+   that is broken, and that has now cost two rounds of "it does not do that" -
+   so which build is on screen is a thing to glance at, not to go and find. */
+.title .build {
+  font-size: 11px; font-weight: 400; opacity: .5; letter-spacing: .04em;
+  font-family: var(--ha-font-family-code, monospace);
+}
 .grow { flex: 1; }
 
 button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid transparent;
