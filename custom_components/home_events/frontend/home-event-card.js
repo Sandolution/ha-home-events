@@ -344,7 +344,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-12b";
+const CARD_BUILD = "2026-08-12d";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1321,6 +1321,22 @@ function warnFilter(spec, why) {
   if (filterWarned.has(spec)) return;
   filterWarned.add(spec);
   console.warn(`home-event-card: cannot apply "|${spec}" - ${why}.`);
+}
+
+/* Whether this card would put a row on an entity at all.
+ *
+ * A light group publishes its members in `attributes.entity_id`; drawing the
+ * group as well as its members puts the same lamps on the card twice, so the
+ * group is dropped. Dropped here rather than by a naming convention - the
+ * attribute is a fact about what the entity is, where the id is one house's
+ * habit.
+ *
+ * One predicate, used by the render path and exported beside the filter
+ * engine, because anything asking "what would a row look like" has to ask the
+ * same question: the Event Manager samples an entity to preview and would
+ * otherwise pick one the card never draws and show an empty card. */
+function drawable(st) {
+  return !!st && !Array.isArray((st.attributes || {}).entity_id);
 }
 
 function splitName(friendly, entityId) {
@@ -2320,9 +2336,7 @@ class HomeEventCard extends HTMLElement {
    * look things up in. */
   _renderLight(e, cfg, id, st) {
     const a = st.attributes || {};
-    /* A light group publishes its members in `attributes.entity_id`. Rendering
-     * it as well as its members puts the same lamps on the card twice. */
-    if (Array.isArray(a.entity_id)) return false;
+    if (!drawable(st)) return false;
     e.icon = a.icon || "mdi:lightbulb";
     e.status = "";
   }
@@ -3294,6 +3308,18 @@ export function matchEntities(hass, spec) {
     if (!probe._excluded(id, cfg, hass.states[id])) out.push(id);
   }
   return out;
+}
+
+/* Of the entities a filter selected, the ones this card would actually draw.
+ *
+ * The gap between the two is small and entirely real: a light group and its
+ * members are all selected by `domains: [light]`, and the card draws the
+ * members only. Anything picking one entity out of a filter's result to show
+ * it - the Event Manager's preview does exactly that - has to ask this or it
+ * will sometimes pick the one thing that is never drawn. */
+export function drawableEntities(hass, ids) {
+  const states = (hass && hass.states) || {};
+  return (ids || []).filter((id) => drawable(states[id]));
 }
 
 /* And the other half of the same question: of the entities a filter selects,

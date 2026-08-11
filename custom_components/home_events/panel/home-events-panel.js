@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12e";
+const PANEL_BUILD = "2026-08-12f";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -1033,6 +1033,12 @@ class HomeEventsPanel extends HTMLElement {
    * otherwise "many" would be several rows rather than one row counting, and
    * the wording being previewed is the counting one.
    *
+   * Only entities the card would actually draw are candidates. The two lists
+   * differ: `domains: [light]` selects a light group and its members alike,
+   * and the card draws the members only, so sampling from the filter's answer
+   * picked a group helper and previewed an empty card. The card exports the
+   * rule rather than this file restating it.
+   *
    * Ordered by entity id rather than by whatever the registry hands back, so
    * the sample does not change under the person editing it. */
   _sampleIds(draft) {
@@ -1045,24 +1051,30 @@ class HomeEventsPanel extends HTMLElement {
             registries: { labels: this._reg.labels, floors: this._reg.floors },
           })
         : [];
+      if (this._engine && this._engine.drawableEntities) {
+        ids = this._engine.drawableEntities(this._hass, ids);
+      }
     } catch (err) {
       return { ids: [] };
     }
     ids = ids.slice().sort();
     if (!ids.length) return { ids: [] };
     if (!this._previewMany) return { ids: [ids[0]] };
-    let pool = ids;
     if (this._groupOf(draft) === "area") {
-      /* The biggest room wins, so the counting row actually counts. */
+      /* The whole of one room, not a handful of it: the card is going to fold
+       * these into a single row and put a number on it, and a number that is
+       * three when the room holds seven is a preview that lies about the row
+       * it is previewing. The biggest room wins, so there is a count at all. */
       const byArea = new Map();
       for (const id of ids) {
         const key = this._areaNameOf(id, (this._hass.entities || {})[id] || {}) || "";
         if (!byArea.has(key)) byArea.set(key, []);
         byArea.get(key).push(id);
       }
-      pool = [...byArea.values()].sort((a, b) => b.length - a.length)[0];
+      return { ids: [...byArea.values()].sort((a, b) => b.length - a.length)[0] };
     }
-    return { ids: pool.slice(0, PREVIEW_MANY) };
+    if (this._groupOf(draft) === "all") return { ids };
+    return { ids: ids.slice(0, PREVIEW_MANY) };
   }
 
   _formHtml() {
@@ -2690,7 +2702,7 @@ textarea.yaml {
    chrome drawn around the card. */
 .previewseg { margin-bottom: 8px; }
 .previewbox {
-  border-radius: 10px; padding: 8px; min-height: 44px;
+  border-radius: 10px; padding: 8px 0; min-height: 44px;
   background: var(--primary-background-color, transparent);
 }
 .previewbox .hint { padding-top: 0; }
