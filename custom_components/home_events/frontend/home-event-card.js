@@ -384,7 +384,7 @@ const PLURAL_KEYS = ["title", "status", "icon"];
 
 /* How a grouping event collapses its rows.
  *
- *   area   one row per room - "3 lights on" under "Bed Room Lynn"
+ *   area   one row per room - "3 lights on" under "Kitchen"
  *   all    one row for the lot - "2 playing" under whatever you title it
  *   false  no grouping
  *
@@ -915,9 +915,9 @@ function stateLabel(hass, stateObj, fallback) {
 /* Excludes are matched as substrings of the entity id so one entry can name a
  * single entity (light.garden_border), a device family (_nightstands) or a
  * whole room (garden_). A regex would be more precise and far less usable. */
-/* Areas are named, not matched: "Bed Room Lynn" must not be excluded by an
- * entry meaning "Bed Room Noud". Compared on a slug so "Bed Room Sander &
- * Renate" and bed_room_sander_renate are the same answer. */
+/* Areas are named, not matched: "Front Bedroom" must not be excluded by an
+ * entry meaning "Back Bedroom". Compared on a slug so "Kitchen & Utility"
+ * and kitchen_utility are the same answer. */
 function areaSlug(name) {
   return String(name || "")
     .toLowerCase()
@@ -2287,8 +2287,8 @@ class HomeEventCard extends HTMLElement {
          * asked. `members` is what a click gets instead - see _handleClick. */
         entity: "",
         /* The room is dropped from a child that would only repeat the row
-         * above it - the detail line is for what this row adds, and under Bed
-         * Room Lynn a second Bed Room Lynn adds nothing. An `all` group has no
+         * above it - the detail line is for what this row adds, and under
+         * Kitchen a second Kitchen adds nothing. An `all` group has no
          * room to repeat, a solo row above kept its own, and a `detail:`
          * template that says something else survives. */
         members: members.map((m) =>
@@ -2386,7 +2386,7 @@ class HomeEventCard extends HTMLElement {
     const parts = splitName(a.friendly_name, id);
     const areaName = this._areaName(id, st) || parts.area || "";
     /* Climate entities are named after their function, not their identity:
-     * "Bed Room Noud | Heating" leaves nothing but the word "Heating" once the
+     * "Front Bedroom | Heating" leaves nothing but the word "Heating" once the
      * room is split off, and "Heating / Heating" is not a row. When the name is
      * entirely boilerplate the room becomes the subject - which is true anyway,
      * since what is heating is the room. Devices with a name of their own (Air

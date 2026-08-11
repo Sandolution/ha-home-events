@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12b";
+const PANEL_BUILD = "2026-08-12c";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -127,40 +127,50 @@ const PREVIEW_CONFIG = {
   type: "custom:home-event-card",
   group_by: "none",
   split_sections: false,
-  max: 8,
+  max: 4,
   hide_when_empty: false,
 };
+/* How many entities "many" is. Enough that a count reads as a count and the
+ * plural wording is exercised; few enough that the answer is still one row to
+ * look at rather than a list to scan. */
+const PREVIEW_MANY = 3;
 
 /* What can go in Title, Detail, Status and Icon. Read at the bottom of the How
  * tab, where the fields it is about are - a syntax explained somewhere else is
  * a syntax nobody finds.
  *
- * Every value in the third column was produced by rendering that template
+ * Every value in the second column was produced by rendering that template
  * through the card, not written from memory. A cheat sheet is read as
- * documentation and believed, so a wrong one is worse than none.
+ * documentation and believed, so a wrong one is worse than none - see
+ * scratchpad/jsenv/probe_examples.mjs, which is what produced them.
+ *
+ * The entities are invented. A worked example does not need anybody's bedroom
+ * in it, and an invented lamp is steadier than a real one: a real brightness
+ * changes the moment somebody dims it.
  *
  * Kept as data rather than as a block of markup so the columns stay columns
  * and the list can be checked against the card's own _interp. */
-const EXAMPLE_ENTITY = "a light called Bed Room Noud | Ceiling, switched on";
+const EXAMPLE_ENTITY = "a light called Kitchen | Ceiling, switched on";
 const PLACEHOLDERS = [
   ["{name}", "Ceiling", "the entity, without the room"],
-  ["{area}", "Bed Room Noud", "the room it is in"],
+  ["{area}", "Kitchen", "the room it is in"],
   ["{state}", "On", "what it is doing, in words"],
   ["{state.raw}", "on", "the same, spelled the way a condition spells it"],
-  ["{attr.brightness}", "35", "any attribute, by name"],
-  ["{attr.friendly_name}", "Bed Room Noud | Ceiling", "the whole name, room and all"],
+  ["{attr.brightness}", "128", "any attribute, by name"],
+  ["{attr.friendly_name}", "Kitchen | Ceiling", "the whole name, room and all"],
   ["{state@sensor.other}", "—", "some other entity's state, not this one's"],
   ["{n}", "—", "how many rows this one stands for, on a grouped event"],
 ];
 
-/* Three replacements and what they actually did, on three real names in this
- * house. The pattern goes after the first | inside the braces. */
+/* Three replacements and what they actually did, on two more invented names
+ * of the shape integrations produce: a room, a device, a machine word. The
+ * pattern goes after the first | inside the braces. */
 const FILTER_EXAMPLES = [
   ["{name|s/ · (State|Error|Status)$//}",
-   "Backup · Manager · State", "Backup · Manager",
+   "Dishwasher · State", "Dishwasher",
    "drop the machine word an integration put on the end"],
   ["{attr.friendly_name|s/\\s*\\|\\s*/ — /g}",
-   "Utilities | Gas | Consumption | Daily", "Utilities — Gas — Consumption — Daily",
+   "Kitchen | Dishwasher | State", "Kitchen — Dishwasher — State",
    "every | becomes a dash — that is what g is for"],
   ["{name|s/^(.*) · (.*)$/$2 of $1/}",
    "Gas · Consumption · Daily", "Daily of Gas · Consumption",
@@ -226,10 +236,13 @@ const HELP = {
   library: "The whole library as YAML - sections, defaults and every event. " +
     "Paste one in to replace it.",
   newevent: "Start an event. It covers nothing until you say what it covers.",
-  preview: "The row itself, drawn by the card rather than imitated: this is a " +
-    "home-event-card holding nothing but this event, reading the house as it " +
-    "is right now. Section headings are left off - what a card puts around " +
-    "the row is the card's half.",
+  preview: "The row itself, drawn by the card rather than imitated: a " +
+    "home-event-card holding nothing but this event. It shows a sample - one " +
+    "of the entities this covers, or a few of them for the counting wording " +
+    "- whatever state they happen to be in, because how a row reads is a " +
+    "different question from which rows there are. That one is on the When " +
+    "tab. Section headings are left off: what a card puts around the row is " +
+    "the card's half.",
 };
 const tip = (key) => (HELP[key] ? ` title="${esc(HELP[key])}"` : "");
 
@@ -370,6 +383,9 @@ class HomeEventsPanel extends HTMLElement {
      * Title updates a row rather than building a card per keystroke. */
     this._preview = null;
     this._cheatOpen = false;
+    /* Whether the sample row is one thing or several. Where the person is
+     * looking, not what they have written, so it is not saved. */
+    this._previewMany = false;
     /* Shown unless it is put away: the whole point of counting is being able
      * to see what was counted. */
     this._showMatches = true;
@@ -937,6 +953,30 @@ class HomeEventsPanel extends HTMLElement {
         event covers on the What tab.</div>`;
       return;
     }
+    /* A sample, not the result.
+     *
+     * Drawing what the event actually shows put anything from nothing to
+     * fifty rows here, and neither teaches anything about wording: an empty
+     * box because the house happens to be quiet reads as a broken preview,
+     * and fifty rows is a list nobody is reading. So the preview is one
+     * specimen of what this event covers - or a handful, when the question is
+     * how it reads while counting - and the conditions are set aside, because
+     * "which of these are on" is the tab next door's question and it answers
+     * it against the real house.
+     *
+     * The specimens are real entities with their real names, states and
+     * attributes. Nothing here is invented: a made-up light would be drawn by
+     * the same renderer as a real one right up to the point where it was not. */
+    const sample = this._sampleIds(draft);
+    if (!sample.ids.length) {
+      if (this._preview) this._preview.remove();
+      host.innerHTML = `<div class="hint">The criteria on the What tab select
+        nothing right now, so there is no entity to draw a row from.</div>`;
+      return;
+    }
+    draft.include = { entities: sample.ids };
+    delete draft.exclude;
+    delete draft.conditions;
     let card = this._preview;
     if (!card) {
       card = document.createElement("home-event-card");
@@ -966,16 +1006,67 @@ class HomeEventsPanel extends HTMLElement {
       events: { [name]: draft },
     };
     card.hass = this._hass;
-    const note = host.querySelector(".prevnote");
-    if (note) note.remove();
-    const say = card.libraryError
-      ? `Not drawable yet: ${card.libraryError}`
-      : off ? "Switched off, so no card draws it. This is how it would read."
-      : "";
-    if (say) {
-      host.insertAdjacentHTML("beforeend",
-        `<div class="hint prevnote">${esc(say)}</div>`);
+    host.querySelectorAll(".prevnote").forEach((n) => n.remove());
+    const lines = [];
+    if (card.libraryError) lines.push(`Not drawable yet: ${card.libraryError}`);
+    if (off) lines.push("Switched off, so no card draws it. This is how it would read.");
+    lines.push(sample.note);
+    host.insertAdjacentHTML("beforeend",
+      `<div class="hint prevnote">${lines.map(esc).join("<br>")}</div>`);
+  }
+
+  /* Which entities the sample is drawn from, and a sentence saying so.
+   *
+   * One is one: the first thing the criteria select, so the row reads the way
+   * a single thing reads. Many wants several that would land in the *same*
+   * row, which for an event grouping by room means several in one room -
+   * otherwise "many" would be several rows rather than one row counting, and
+   * the wording being previewed is the counting one.
+   *
+   * Ordered by entity id rather than by whatever the registry hands back, so
+   * the sample does not change under the person editing it. */
+  _sampleIds(draft) {
+    let ids = [];
+    try {
+      ids = this._engine
+        ? this._engine.matchEntities(this._hass, {
+            include: clone(draft.include),
+            exclude: draft.exclude ? clone(draft.exclude) : null,
+            registries: { labels: this._reg.labels, floors: this._reg.floors },
+          })
+        : [];
+    } catch (err) {
+      return { ids: [], note: this._reason(err) };
     }
+    ids = ids.slice().sort();
+    if (!ids.length) return { ids: [], note: "" };
+    const nameOf = (id) => (this._hass.states[id].attributes || {}).friendly_name || id;
+    if (!this._previewMany) {
+      return {
+        ids: [ids[0]],
+        note: `One of the ${ids.length} this covers: ${nameOf(ids[0])}` +
+          `, in whatever state it is in.`,
+      };
+    }
+    let pool = ids;
+    if (this._groupOf(draft) === "area") {
+      /* The biggest room wins, so the counting row actually counts. */
+      const byArea = new Map();
+      for (const id of ids) {
+        const key = this._areaNameOf(id, (this._hass.entities || {})[id] || {}) || "";
+        if (!byArea.has(key)) byArea.set(key, []);
+        byArea.get(key).push(id);
+      }
+      pool = [...byArea.values()].sort((a, b) => b.length - a.length)[0];
+    }
+    const take = pool.slice(0, PREVIEW_MANY);
+    return {
+      ids: take,
+      note: take.length < 2
+        ? `Only one entity is covered, so there is no counting row to show.`
+        : `${take.length} of the ${ids.length} this covers, in whatever state ` +
+          `they are in.`,
+    };
   }
 
   _formHtml() {
@@ -1061,9 +1152,15 @@ class HomeEventsPanel extends HTMLElement {
            </select>
          </div></div>
 
-         <div class="field"><div class="label"${tip("preview")}>Reads as</div>
+         <div class="field"><div class="label"${tip("preview")}>Reads as</div><div>
+           <div class="seg small previewseg">
+             <button data-act="prevone"${this._previewMany ? "" : ' class="on"'}
+                     title="How the row reads for a single thing">One</button>
+             <button data-act="prevmany"${this._previewMany ? ' class="on"' : ""}
+                     title="How it reads when it stands for several">Many</button>
+           </div>
            <div class="previewbox"><div data-preview></div></div>
-         </div>
+         </div></div>
        </div>
        ${this._examplesHtml()}`
     );
@@ -1077,7 +1174,7 @@ class HomeEventsPanel extends HTMLElement {
   _examplesHtml() {
     const row = (cells) => `<div class="exrow">${cells}</div>`;
     return `<details class="cheat"${this._cheatOpen ? " open" : ""} data-cheat>
-        <summary>What you can write in Title, Detail, Status and Icon</summary>
+        <summary>(?) What you can write in Title, Detail, Status and Icon</summary>
         <div class="cheatbody">
           <div class="exhead">Placeholders <span class="dim">— reading
             ${esc(EXAMPLE_ENTITY)}</span></div>
@@ -1956,6 +2053,10 @@ class HomeEventsPanel extends HTMLElement {
         this._setDirty(true);
         this._renderPane();
         return this._el.pane.querySelector(".secrow:last-of-type .secname").focus();
+      case "prevone":
+      case "prevmany":
+        this._previewMany = el.dataset.act === "prevmany";
+        return this._renderPane();
       case "showmatches":
         this._showMatches = !this._showMatches;
         return this._recount();  // the list, not the row: the preview is unchanged
@@ -2581,6 +2682,7 @@ textarea.yaml {
 /* The preview sits on the panel's own background rather than on a field, so
    the card inside it looks like a card on a dashboard and not like a control
    in this form. */
+.previewseg { margin-bottom: 8px; }
 .previewbox {
   border: 1px dashed var(--divider-color, rgba(127,127,127,.35));
   border-radius: 10px; padding: 10px; min-height: 44px;
