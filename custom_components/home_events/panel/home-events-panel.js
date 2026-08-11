@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12d";
+const PANEL_BUILD = "2026-08-12e";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -1010,15 +1010,22 @@ class HomeEventsPanel extends HTMLElement {
     };
     card.hass = this._hass;
     host.querySelectorAll(".prevnote").forEach((n) => n.remove());
-    const lines = [];
-    if (card.libraryError) lines.push(`Not drawable yet: ${card.libraryError}`);
-    if (off) lines.push("Switched off, so no card draws it. This is how it would read.");
-    lines.push(sample.note);
-    host.insertAdjacentHTML("beforeend",
-      `<div class="hint prevnote">${lines.map(esc).join("<br>")}</div>`);
+    /* Only when something is wrong. A line under every preview saying which
+     * entity it sampled was a sentence to read past on the way to the row it
+     * was about - the row is the answer, and the One/Many buttons above it
+     * already say what kind of answer it is. */
+    const say = card.libraryError
+      ? `Not drawable yet: ${card.libraryError}`
+      : off
+        ? "Switched off, so no card draws it. This is how it would read."
+        : "";
+    if (say) {
+      host.insertAdjacentHTML("beforeend",
+        `<div class="hint prevnote">${esc(say)}</div>`);
+    }
   }
 
-  /* Which entities the sample is drawn from, and a sentence saying so.
+  /* Which entities the sample is drawn from.
    *
    * One is one: the first thing the criteria select, so the row reads the way
    * a single thing reads. Many wants several that would land in the *same*
@@ -1039,18 +1046,11 @@ class HomeEventsPanel extends HTMLElement {
           })
         : [];
     } catch (err) {
-      return { ids: [], note: this._reason(err) };
+      return { ids: [] };
     }
     ids = ids.slice().sort();
-    if (!ids.length) return { ids: [], note: "" };
-    const nameOf = (id) => (this._hass.states[id].attributes || {}).friendly_name || id;
-    if (!this._previewMany) {
-      return {
-        ids: [ids[0]],
-        note: `One of the ${ids.length} this covers: ${nameOf(ids[0])}` +
-          `, in whatever state it is in.`,
-      };
-    }
+    if (!ids.length) return { ids: [] };
+    if (!this._previewMany) return { ids: [ids[0]] };
     let pool = ids;
     if (this._groupOf(draft) === "area") {
       /* The biggest room wins, so the counting row actually counts. */
@@ -1062,14 +1062,7 @@ class HomeEventsPanel extends HTMLElement {
       }
       pool = [...byArea.values()].sort((a, b) => b.length - a.length)[0];
     }
-    const take = pool.slice(0, PREVIEW_MANY);
-    return {
-      ids: take,
-      note: take.length < 2
-        ? `Only one entity is covered, so there is no counting row to show.`
-        : `${take.length} of the ${ids.length} this covers, in whatever state ` +
-          `they are in.`,
-    };
+    return { ids: pool.slice(0, PREVIEW_MANY) };
   }
 
   _formHtml() {
@@ -2690,13 +2683,14 @@ textarea.yaml {
 .mrow .mid { flex: 0 2 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 
-/* The preview sits on the panel's own background rather than on a field, so
-   the card inside it looks like a card on a dashboard and not like a control
-   in this form. */
+/* The ground a dashboard would put the card on, and nothing else. A dashed
+   border made a box inside a box, and the card is meant to look here exactly
+   as it looks there - that is the whole claim the preview makes. What marks it
+   as a preview is the label beside it and the One/Many buttons above it, not
+   chrome drawn around the card. */
 .previewseg { margin-bottom: 8px; }
 .previewbox {
-  border: 1px dashed var(--divider-color, rgba(127,127,127,.35));
-  border-radius: 10px; padding: 10px; min-height: 44px;
+  border-radius: 10px; padding: 8px; min-height: 44px;
   background: var(--primary-background-color, transparent);
 }
 .previewbox .hint { padding-top: 0; }

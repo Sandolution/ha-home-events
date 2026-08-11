@@ -2934,7 +2934,14 @@ class HomeEventCard extends HTMLElement {
 /* --------------------------------------------------------------- styles */
 
 const STYLES = `
-:host { display: block; }
+/* Line height is stated rather than inherited.
+ *
+ * On a Lovelace view the card picks 1.6 up from the page and every row is
+ * spaced by it; mounted anywhere else - the Event Manager draws a real one to
+ * preview a row - it fell back to normal and the same card set differently.
+ * A card whose spacing depends on what is above it in the DOM is a card that
+ * looks wrong somewhere. */
+:host { display: block; line-height: var(--ha-line-height-normal, 1.6); }
 
 /* One surface per section. The 8px gap is the format break: it separates
    groups more reliably than a hairline, and it is the same rhythm
