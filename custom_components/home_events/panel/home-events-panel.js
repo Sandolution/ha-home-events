@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12g";
+const PANEL_BUILD = "2026-08-12h";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -1160,7 +1160,7 @@ class HomeEventsPanel extends HTMLElement {
            </select>
          </div></div>
 
-         <div class="field"><div class="label"${tip("preview")}>Reads as</div><div>
+         <div class="field chiprow"><div class="label"${tip("preview")}>Reads as</div><div>
            <div class="seg small previewseg">
              <button data-act="prevone"${this._previewMany ? "" : ' class="on"'}
                      title="How the row reads for a single thing">One</button>
@@ -2708,6 +2708,15 @@ textarea.yaml {
    as it looks there - that is the whole claim the preview makes. What marks it
    as a preview is the label beside it and the One/Many buttons above it, not
    chrome drawn around the card. */
+/* One measured pixel, and the only one on this form.
+   The label and the chip beside it share a baseline exactly - both sets of
+   glyphs end on the same row, which is what jsenv/probe_ink.mjs reads off a
+   6x screenshot. It still looks high, and it looks high for a reason: the
+   label is 13px and the chip's word is 12px inside a filled pill, so the eye
+   compares the pill's block centre against the label's, not the baseline they
+   share. That gap measures 0.83px. Baseline is the right rule for text beside
+   text; a filled chip is not text beside text. */
+.field.chiprow .label { position: relative; top: 1px; }
 .previewseg { margin-bottom: 8px; }
 .previewbox {
   border-radius: 10px; padding: 8px 0; min-height: 44px;
