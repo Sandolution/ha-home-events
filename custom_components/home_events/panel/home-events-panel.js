@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12f";
+const PANEL_BUILD = "2026-08-12g";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -2482,9 +2482,17 @@ textarea.yaml {
   display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .legend .q { font-size: 12px; letter-spacing: 0; text-transform: none; font-style: italic; }
 
+/* Labels line up with the words beside them, not with the boxes those words
+   are in.
+   The label used to sit 8px down, which centres it against a 32px input -
+   which is what most of these fields hold. It is wrong by however much any
+   other control differs: 4px against the severity chips, 5px against a select
+   or a checkbox, and 5px against the preview's 22px One/Many chip, where it
+   is most visible because the chip is small and filled. Aligning on the
+   baseline asks the question the eye is actually asking. */
 .field { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px;
-  align-items: start; margin-bottom: 10px; }
-.label { font-size: 13px; color: var(--secondary-text-color); padding-top: 8px; }
+  align-items: baseline; margin-bottom: 10px; }
+.label { font-size: 13px; color: var(--secondary-text-color); }
 .label.strong { color: var(--primary-text-color); font-weight: 500; }
 .field > div > input, .field > div > select { width: 100%; box-sizing: border-box; }
 .field .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
