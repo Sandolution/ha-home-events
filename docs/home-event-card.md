@@ -42,7 +42,37 @@ That is a complete, working card. Everything below is optional.
 | `collapsible` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
 | `promote_alerts` | `"alerts"` | A section id, or `false` — anything red is filed there rather than under its own section. Only applies to `group_by: category`. |
 | `split_sections` | `true` | One card per section, separated by a gap. Turn it off for `group_by: area`, which otherwise makes a card per room. |
+| `tidy_names` | `true` | Whether the card may rewrite a friendly name before drawing it. See below. |
 | `text` | see below | Every string the card writes itself. |
+
+### tidy_names — what the card does to a name
+
+`Bath Room | Ventilation | Timer` reaches the screen as **Ventilation** over
+**Bath Room**. Two separate edits get it there, and only one of them removes
+anything:
+
+| | |
+|---|---|
+| **the `\|` split** | the first segment comes off the front, on the convention that names here read *Room \| Thing \| Category*. The room is **not** deleted — it is drawn in the row's own location slot instead of being said twice. |
+| **`text.strip`** | category words come off the end. This one really does drop text: *Timer* is gone and nothing else says it. |
+
+Measured on that entity:
+
+| | title | location |
+|---|---|---|
+| as drawn today | `Ventilation` | Bath Room |
+| `text: {strip: {timer: []}}` | `Ventilation · Timer` | Bath Room |
+| `tidy_names: false` | `Bath Room \| Ventilation \| Timer` | Bath Room |
+
+Note the location in the third row. With the splitting off, the room is still
+there — for these entities it was never coming from the name. `_areaName` asks
+the **registry** first and only falls back to the first name segment for
+entities core has not been told about. So `tidy_names: false` costs you
+nothing but a longer title, unless your rooms live only in your naming.
+
+`tidy_names: false` turns off both edits at once. `text.strip` tunes the word
+lists when tidying is on — set a list to `[]` to keep those words while still
+splitting.
 
 ### text
 

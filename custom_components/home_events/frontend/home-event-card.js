@@ -151,6 +151,14 @@
  *                    is filed there rather than under its own section
  *   split_sections:  bool, default true — a card per section. Turn off for
  *                    `group_by: area`, which otherwise makes a card per room
+ *   tidy_names:      bool, default true — whether the card may rewrite a
+ *                    friendly name. On, "Bath Room | Ventilation | Timer" is
+ *                    drawn as "Ventilation" with the room in the row's own
+ *                    location slot, the first `|` segment coming off the front
+ *                    and the words in `text.strip` coming off the end. Off,
+ *                    the name is the title, whole. Rooms then come only from
+ *                    the registry, which is where they come from anyway for
+ *                    anything core has been told about
  *   text:            every string the card writes itself, for translating or
  *                    rewording. Any subset; the rest keep their defaults:
  *
@@ -274,7 +282,8 @@
  *
  *     {state}       humanised; {state.raw} is not
  *     {attr.foo}    an attribute, and {attr.foo@other.entity} another entity's
- *     {name}        the friendly name with the area stripped off the front
+ *     {name}        the friendly name, tidied - see `tidy_names`. The whole
+ *                   name when that is off
  *     {area}        where it is
  *     {n}           how many landed in this row - grouped events only
  *
@@ -356,7 +365,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13c";
+const CARD_BUILD = "2026-08-13d";
 
 /* ------------------------------------------------------------------ config */
 
@@ -561,8 +570,27 @@ const DEFAULTS = {
    * as a deliberate structure. Set it false for `group_by: area`, which can
    * produce eight rooms and therefore eight small surfaces. */
   split_sections: true,
-
-
+  /* Whether the card is allowed to rewrite a friendly name before drawing it.
+   *
+   * On, which is the default, two things happen and both are edits nobody
+   * asked for in so many words:
+   *
+   *   the first `|` segment is taken off the front, on the convention that
+   *   names here read "Bath Room | Ventilation | Timer" - the room is drawn
+   *   in the row's own location slot instead of being said twice
+   *
+   *   the category words in text.strip come off the end, so a row says the
+   *   thing rather than what kind of thing it is
+   *
+   * Off, the friendly name is the title, exactly as Home Assistant has it.
+   * Rooms then come only from the registry, which is where they should have
+   * come from anyway; a name-derived room was always the fallback for
+   * entities core has not been told about.
+   *
+   * This is a switch rather than a default because both edits are guesses
+   * about somebody else's naming, and a guess about a name is the kind of
+   * thing that should be possible to turn off in one line. */
+  tidy_names: true,
 };
 
 /* ------------------------------------------------------------------- utils */
@@ -2174,11 +2202,29 @@ class HomeEventCard extends HTMLElement {
     return null;
   }
 
+  /* A friendly name, taken apart - or not, if `tidy_names: false`.
+   *
+   * Both of the card's name edits go through here and through _strip, so
+   * "leave my names alone" is one flag rather than something to remember at
+   * five call sites. Off, the whole friendly name is the title and `area` is
+   * null, which puts the room back where it belongs: the registry. */
+  _nameParts(friendly, entityId) {
+    if (this._config.tidy_names === false) {
+      return { area: null, name: String(friendly || entityId || "") };
+    }
+    return splitName(friendly, entityId);
+  }
+
+  _strip(name, words) {
+    if (this._config.tidy_names === false) return String(name || "");
+    return stripSuffix(name, words);
+  }
+
   _areaName(entityId, stateObj) {
     const known = this._registryArea(entityId);
     if (known) return known;
     const attrs = (stateObj && stateObj.attributes) || {};
-    return splitName(attrs.friendly_name, entityId).area;
+    return this._nameParts(attrs.friendly_name, entityId).area;
   }
 
   /* Walking 1700 states on every hass tick to find six timers would be
@@ -2305,7 +2351,7 @@ class HomeEventCard extends HTMLElement {
    * three fields its domain actually has an opinion about. */
   _base(name, cfg, id, st) {
     const a = st.attributes || {};
-    const parts = splitName(a.friendly_name, id);
+    const parts = this._nameParts(a.friendly_name, id);
     const area = this._areaName(id, st) || parts.area || "";
     return {
       key: id,
@@ -2466,7 +2512,7 @@ class HomeEventCard extends HTMLElement {
      * `Alarm | Master` split into "Master" under "Alarm" reads as a room
      * called Alarm containing a thing called Master. */
     const where = this._registryArea(id);
-    const parts = splitName(a.friendly_name, id);
+    const parts = this._nameParts(a.friendly_name, id);
     e.title = where ? parts.name : [parts.area, parts.name].filter(Boolean).join(SEPARATOR);
     e.sub = where || "";
     e.area = where;
@@ -2514,7 +2560,7 @@ class HomeEventCard extends HTMLElement {
         ? `${cur}${deg}`
         : "";
 
-    const parts = splitName(a.friendly_name, id);
+    const parts = this._nameParts(a.friendly_name, id);
     const areaName = this._areaName(id, st) || parts.area || "";
     /* Climate entities are named after their function, not their identity:
      * "Front Bedroom | Heating" leaves nothing but the word "Heating" once the
@@ -2522,7 +2568,7 @@ class HomeEventCard extends HTMLElement {
      * entirely boilerplate the room becomes the subject - which is true anyway,
      * since what is heating is the room. Devices with a name of their own (Air
      * Conditioner) keep it and take the room as detail. */
-    const device = stripSuffix(parts.name, text.strip.climate);
+    const device = this._strip(parts.name, text.strip.climate);
     const where = device ? areaName : "";
 
     e.title = device || areaName || parts.name;
@@ -2539,7 +2585,7 @@ class HomeEventCard extends HTMLElement {
   _renderTimer(e, cfg, id, st) {
     const text = this._config.text;
     const a = st.attributes || {};
-    e.title = stripSuffix(e.title, text.strip.timer);
+    e.title = this._strip(e.title, text.strip.timer);
     e.severity = "active";
     e.icon = a.icon || "mdi:fan";
     e.status = text.status.running;
@@ -2557,8 +2603,8 @@ class HomeEventCard extends HTMLElement {
     const text = this._config.text;
     const a = st.attributes || {};
     const track = [a.media_title, a.media_artist].filter(Boolean).join(" \u00b7 ");
-    const parts = splitName(a.friendly_name, id);
-    e.title = stripSuffix(parts.name, text.strip.media) || parts.area || parts.name;
+    const parts = this._nameParts(a.friendly_name, id);
+    e.title = this._strip(parts.name, text.strip.media) || parts.area || parts.name;
     e.icon = a.icon || (st.state === "playing" ? "mdi:play-circle" : "mdi:pause-circle");
     e.sub = track || e.area || "";
   }
