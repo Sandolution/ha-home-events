@@ -278,6 +278,31 @@ A member row inside an open group takes **neither** wording — the mapping
 belongs to the count, and a member is one thing. The key is dropped rather
 than resolved to `one`, so the domain's own value stands.
 
+`one` is not "how a member reads". It is the wording for a row that **stands
+for one entity** — a group that turned out to hold exactly one. Resolving it
+onto members would give every member the same line, which is the opposite of
+what an opened group is for: `status: {one: "1 light on", many: "{n} lights
+on"}` would put *1 light on* against each of three lamps.
+
+### A member never repeats the row above it
+
+Two rules, and they are the same rule seen from either end of the row:
+
+| | |
+|---|---|
+| the **detail** line | under **Kitchen**, a member's own *Kitchen* is dropped |
+| the **title** line | under **Ventilation**, a member's own *Ventilation* is dropped, and its room comes up to take the line |
+
+The second one exists because entities are often named after the thing that
+groups them. `Bath Room \| Ventilation \| Timer` becomes "Ventilation" once
+the room and the machine word come off — so under a group called Ventilation,
+three rows say Ventilation and the only fact on any of them is the room. Now
+they say the room.
+
+It fires on the repetition and nothing else. A member with a name of its own —
+*Manual Override*, *Hot Water · Active* — keeps it, room and all. A member
+with no room to promote keeps its name too: a name is better than a blank.
+
 ### Why a grouped row's detail line is usually empty
 
 Because the room is already on its title line. "Kitchen" over "Kitchen" is not

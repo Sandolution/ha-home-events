@@ -307,6 +307,11 @@
  * itself is not a second fact. Give the group a `title` of its own and the
  * room moves down to the detail line rather than disappearing.
  *
+ * `one` is the wording for a row standing for one entity, not for a member of
+ * an open group. A member takes neither wording, and it never repeats the row
+ * it hangs under: a title equal to the group's is replaced by the member's
+ * room, the same way a member's detail line already drops a repeated room.
+ *
  * ---------------------------------------------------------------------------
  * Conditions
  *
@@ -349,7 +354,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13a";
+const CARD_BUILD = "2026-08-13b";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2433,6 +2438,28 @@ class HomeEventCard extends HTMLElement {
        * and no way to tell which room either was about. So it moves to the
        * detail line, unless a `detail:` template has claimed that too. */
       if (b.area && row.title !== label && !row.sub) row.sub = b.area;
+      /* And the same rule the other way up, for the title.
+       *
+       * A member that repeats the row it hangs under is a row that says
+       * nothing. The detail line has been de-duplicated since room groups
+       * existed - under Kitchen, a second Kitchen adds nothing - and a title
+       * can repeat just as flatly: three rows called Ventilation under a row
+       * called Ventilation, where the only fact on any of them is the room.
+       *
+       * Nothing is leaking to cause it. Those entities are called
+       * "Bath Room | Ventilation | Timer", so what is left after the room and
+       * the machine word come off really is the group's own name. Whichever
+       * way it arose, the repeat is not worth a line, so the room comes up to
+       * take it and the detail line goes.
+       *
+       * Only where there is a room to promote, and only where it differs -
+       * a member with nowhere to be keeps its name, a name being better than
+       * a blank. */
+      row.members = row.members.map((m) =>
+        m.title === row.title && m.sub && m.sub !== m.title
+          ? { ...m, title: m.sub, sub: "" }
+          : m
+      );
       out.push(ev(row));
     }
   }
