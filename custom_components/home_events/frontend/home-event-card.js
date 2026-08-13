@@ -346,7 +346,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-12d";
+const CARD_BUILD = "2026-08-12e";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2247,7 +2247,20 @@ class HomeEventCard extends HTMLElement {
     const hass = this._hass;
     const text = this._config.text;
     const mode = groupMode(cfg);
-    const one = singular(cfg);
+    /* Two different questions, and they had one answer for too long.
+     *
+     * `asMember` is a row *inside* an open group: one thing among several, so
+     * the group's counting wording does not belong on it and the domain
+     * renderer's own value should stand - see singular().
+     *
+     * `asOne` is a group that turned out to hold one thing. That row is not a
+     * member of anything; it is the event, standing for one entity, which is
+     * precisely what the author's "if it is one" wording is for. Decorating it
+     * with `asMember` threw that wording away and fell back to the entity's
+     * name, so an event worded "Ventilation active" read "Hot Water" whenever
+     * exactly one thing matched. */
+    const asMember = singular(cfg);
+    const asOne = plural(cfg, 1);
     const buckets = new Map();
 
     for (const id of ids) {
@@ -2268,22 +2281,27 @@ class HomeEventCard extends HTMLElement {
     }
 
     for (const b of buckets.values()) {
-      /* Decorated with `one`, not `cfg`: see singular(). */
-      const members = b.ids
-        .map((id) => this._decorate(name, one, id, hass.states[id]))
-        .filter(Boolean);
-      if (!members.length) continue;
+      /* Kept with their ids, because a bucket of one has to be decorated a
+       * second time and differently. */
+      const kept = [];
+      for (const id of b.ids) {
+        const row = this._decorate(name, asMember, id, hass.states[id]);
+        if (row) kept.push([id, row]);
+      }
+      if (!kept.length) continue;
 
       /* A group of one is a device with a room written on it twice. One lamp
        * on in the study is "Ceiling, Study Room", not "Study Room" with a
        * chevron hiding the word Ceiling - and the row this pushes is exactly
        * the row opening the group would have shown, so nothing is lost by the
        * group never appearing. */
-      if (members.length === 1) {
-        out.push(ev(members[0]));
+      if (kept.length === 1) {
+        const [id] = kept[0];
+        out.push(ev(this._decorate(name, asOne, id, hass.states[id]) || kept[0][1]));
         continue;
       }
 
+      const members = kept.map(([, row]) => row);
       const n = members.length;
       const label = b.area || humanise(name);
       const vars = { n: n, name: label, area: b.area || "" };
