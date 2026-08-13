@@ -42,37 +42,54 @@ That is a complete, working card. Everything below is optional.
 | `collapsible` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
 | `promote_alerts` | `"alerts"` | A section id, or `false` — anything red is filed there rather than under its own section. Only applies to `group_by: category`. |
 | `split_sections` | `true` | One card per section, separated by a gap. Turn it off for `group_by: area`, which otherwise makes a card per room. |
-| `tidy_names` | `true` | Whether the card may rewrite a friendly name before drawing it. See below. |
+| `tidy_names` | `false` | Let the card rewrite friendly names. Off. See below. |
 | `text` | see below | Every string the card writes itself. |
 
-### tidy_names — what the card does to a name
+### Names and locations
 
-`Bath Room | Ventilation | Timer` reaches the screen as **Ventilation** over
-**Bath Room**. Two separate edits get it there, and only one of them removes
-anything:
+**The name is drawn as Home Assistant has it.** The card does not split it,
+shorten it, or take words off the end. `Bath Room | Ventilation | Timer` is
+the title, all of it.
 
-| | |
-|---|---|
-| **the `\|` split** | the first segment comes off the front, on the convention that names here read *Room \| Thing \| Category*. The room is **not** deleted — it is drawn in the row's own location slot instead of being said twice. |
-| **`text.strip`** | category words come off the end. This one really does drop text: *Timer* is gone and nothing else says it. |
+**The location comes from the area assigned in the registry** — the entity's
+own, or its device's. Not from the name.
 
-Measured on that entity:
+That is the whole rule, and it is the same rule for everyone. An earlier
+version of this card guessed: it took the first `|` segment as the room, on
+the convention that names read *Room | Thing | Category*. That convention is
+real in the house this was built in, which is exactly how it came to be
+assumed — a convention you can see out of your own window looks like a fact.
+Somewhere else the first segment is a floor, or a manufacturer, or whose
+device it is, and the card would file *Sonos* as a room. Guessing wrong about
+the one string somebody wrote themselves is worse than not guessing.
+
+To shorten a name, say so — the template filter is per event and exact:
+
+```yaml
+title: "{name|s/^[^|]*\\|\\s*//}"     # drop the first segment
+title: "{name|s/\\s*\\|\\s*Timer$//}" # drop a trailing category word
+```
+
+#### tidy_names
+
+`tidy_names: true` restores the old behaviour for a card that wants it: the
+first `|` segment becomes the location, and the words in `text.strip` come off
+the end. Kept because the convention is real where it is real; off because the
+card cannot tell whether that is here.
+
+Measured on `Bath Room | Ventilation | Timer`:
 
 | | title | location |
 |---|---|---|
-| as drawn today | `Ventilation` | Bath Room |
-| `text: {strip: {timer: []}}` | `Ventilation · Timer` | Bath Room |
-| `tidy_names: false` | `Bath Room \| Ventilation \| Timer` | Bath Room |
+| default | `Bath Room \| Ventilation \| Timer` | Bath Room |
+| `tidy_names: true` | `Ventilation` | Bath Room |
+| `tidy_names: true` + `text: {strip: {timer: []}}` | `Ventilation · Timer` | Bath Room |
 
-Note the location in the third row. With the splitting off, the room is still
-there — for these entities it was never coming from the name. `_areaName` asks
-the **registry** first and only falls back to the first name segment for
-entities core has not been told about. So `tidy_names: false` costs you
-nothing but a longer title, unless your rooms live only in your naming.
-
-`tidy_names: false` turns off both edits at once. `text.strip` tunes the word
-lists when tidying is on — set a list to `[]` to keep those words while still
-splitting.
+The location is the same in all three. Turning the splitting off cost nothing
+here, because every one of those entities has an area assigned — which is the
+usual case, and the reason the registry is the better source. Across this
+card's whole library, in a quiet house and with everything running, **no row
+lost its location.** Only a room that lives *only* in a name would.
 
 ### text
 

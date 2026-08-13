@@ -151,14 +151,14 @@
  *                    is filed there rather than under its own section
  *   split_sections:  bool, default true — a card per section. Turn off for
  *                    `group_by: area`, which otherwise makes a card per room
- *   tidy_names:      bool, default true — whether the card may rewrite a
- *                    friendly name. On, "Bath Room | Ventilation | Timer" is
- *                    drawn as "Ventilation" with the room in the row's own
- *                    location slot, the first `|` segment coming off the front
- *                    and the words in `text.strip` coming off the end. Off,
- *                    the name is the title, whole. Rooms then come only from
- *                    the registry, which is where they come from anyway for
- *                    anything core has been told about
+ *   tidy_names:      bool, default false — a friendly name is drawn as Home
+ *                    Assistant has it, and a row's location comes from the
+ *                    area assigned in the registry. True restores the old
+ *                    behaviour, where the first `|` segment was taken as the
+ *                    room and the words in `text.strip` came off the end -
+ *                    which is one house's filing scheme, not a fact, and is
+ *                    why it is off. To shorten a name, say so per event:
+ *                    `title: "{name|s/^[^|]+\| //}"`
  *   text:            every string the card writes itself, for translating or
  *                    rewording. Any subset; the rest keep their defaults:
  *
@@ -365,7 +365,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13d";
+const CARD_BUILD = "2026-08-13e";
 
 /* ------------------------------------------------------------------ config */
 
@@ -570,27 +570,29 @@ const DEFAULTS = {
    * as a deliberate structure. Set it false for `group_by: area`, which can
    * produce eight rooms and therefore eight small surfaces. */
   split_sections: true,
-  /* Whether the card is allowed to rewrite a friendly name before drawing it.
+  /* Whether the card may rewrite a friendly name before drawing it.
    *
-   * On, which is the default, two things happen and both are edits nobody
-   * asked for in so many words:
+   * Off, and it took an argument to get there. On, two things happen: the
+   * first `|` segment is taken off the front, and the category words in
+   * text.strip come off the end. Both were on by default for most of this
+   * card's life, and both were wrong to be.
    *
-   *   the first `|` segment is taken off the front, on the convention that
-   *   names here read "Bath Room | Ventilation | Timer" - the room is drawn
-   *   in the row's own location slot instead of being said twice
+   * "Bath Room | Ventilation | Timer" is one house's filing scheme. It is a
+   * good one and the card was built against it, which is exactly how it came
+   * to be assumed: a convention you can see out of your own window looks like
+   * a fact. Somewhere else the first segment is a floor, or a manufacturer,
+   * or the person the device belongs to, and the card would silently file
+   * "Sonos" as a room. A card that guesses at somebody's naming and is wrong
+   * has damaged the one string they wrote themselves.
    *
-   *   the category words in text.strip come off the end, so a row says the
-   *   thing rather than what kind of thing it is
+   * So the name is drawn as Home Assistant has it, and the row's location
+   * comes from the area assigned in the registry - which is where a location
+   * belongs, is the same answer for everyone, and is what core itself uses.
    *
-   * Off, the friendly name is the title, exactly as Home Assistant has it.
-   * Rooms then come only from the registry, which is where they should have
-   * come from anyway; a name-derived room was always the fallback for
-   * entities core has not been told about.
-   *
-   * This is a switch rather than a default because both edits are guesses
-   * about somebody else's naming, and a guess about a name is the kind of
-   * thing that should be possible to turn off in one line. */
-  tidy_names: true,
+   * Turning it on restores the old behaviour for a card that wants it. It is
+   * kept because the convention is real where it is real; it is off because
+   * the card cannot tell whether that is here. */
+  tidy_names: false,
 };
 
 /* ------------------------------------------------------------------- utils */
@@ -1320,9 +1322,11 @@ function candidateDomains(filter) {
   return out.length ? out : null;
 }
 
-/* Friendly names here read "Kitchen | Dishwasher | State". The area is the
- * first segment and the trailing domain word is noise once the row sits under
- * a group heading, so both are stripped and what remains is the device. */
+/* What is left of a `|`-piped name once tidy_names has taken a segment off the
+ * front: "Kitchen | Dishwasher | State" joins back up as "Dishwasher \u00b7 State".
+ * Only reachable with tidy_names on - by default a name is drawn whole, pipes
+ * and all, because how somebody files their entities is not this card's to
+ * decide. Also the join between a thermostat's room and its temperatures. */
 const SEPARATOR = " \u00b7 ";
 
 /* A replace, on whatever a placeholder produced.
@@ -2174,17 +2178,15 @@ class HomeEventCard extends HTMLElement {
 
   /* ------------------------------------------------------------- registry */
 
-  /* Area resolution prefers the registry, because that is the answer Home
-   * Assistant itself would give. The friendly-name prefix is a fallback for
-   * entities with no device and no area assignment - which in this house still
-   * carry their room in the name. */
-  /* The registry's answer only, or null. Separate from _areaName because the
-   * two are not interchangeable: the registry knows a device's room, while the
-   * name convention only guesses one from the first segment of a friendly
-   * name. That guess is right for `Kitchen | Dishwasher` and wrong for
-   * `Alarm | Master`, where the first segment is not a room at all - so a
-   * caller that needs to know whether an entity is really *somewhere* has to
-   * be able to ask without the guess mixed in. */
+  /* A row's location is the area assigned in the registry: the entity's own,
+   * or its device's. That is the answer Home Assistant itself would give, and
+   * it is the same answer in every installation.
+   *
+   * With `tidy_names` on there is a second source - the first segment of a
+   * `|`-piped name - and _areaName falls back to it. That is a guess, right
+   * for `Kitchen | Dishwasher` and wrong for `Alarm | Master`, where the first
+   * segment is not a room at all. _registryArea is the unguessed answer, for
+   * callers that need to know whether an entity is really *somewhere*. */
   _registryArea(entityId) {
     const hass = this._hass;
     const entReg = hass.entities && hass.entities[entityId];
