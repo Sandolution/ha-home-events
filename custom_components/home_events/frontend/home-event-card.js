@@ -376,7 +376,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13i";
+const CARD_BUILD = "2026-08-13j";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2493,6 +2493,13 @@ class HomeEventCard extends HTMLElement {
       const modes = new Set(members.map((m) => m.mode));
       const gmode = cfg.time_mode ||
         (modes.size === 1 ? [...modes][0] : "since");
+      /* And the same question asked of the status. Three fans all reading
+       * Running make a group that is running, and blanking the word left the
+       * row saying less than every row inside it. Only when they agree:
+       * Done, Active and Playing have no one word between them, and taking
+       * the first would be taking whichever the index reached first. */
+      const said = new Set(members.map((m) => m.status));
+      const status = said.size === 1 ? [...said][0] : "";
       const counting = gmode === "until" || gmode === "remaining";
       const stamps = members.map((m) => m.at).filter((v) => isFinite(v));
       const at = stamps.length
@@ -2507,7 +2514,7 @@ class HomeEventCard extends HTMLElement {
         title: label,
         sub: "",
         area: b.area,
-        status: "",
+        status,
         at,
         mode: gmode,
         /* Not b.ids[0]. A grouped row is about the group; opening the first

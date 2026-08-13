@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-13c";
+const PANEL_BUILD = "2026-08-13d";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -130,6 +130,17 @@ const PREVIEW_CONFIG = {
   max: 4,
   hide_when_empty: false,
 };
+/* The overview's card. Not the preview's: this one is the whole library on a
+ * dashboard, so it keeps its sections and its headings, and is capped at a
+ * screenful because it is there to be recognised rather than read. */
+const HOME_CONFIG = {
+  type: "custom:home-event-card",
+  group_by: "category",
+  split_sections: true,
+  max: 12,
+  hide_when_empty: false,
+};
+
 /* How many entities "many" is. Enough that a count reads as a count and the
  * plural wording is exercised; few enough that the answer is still one row to
  * look at rather than a list to scan. */
@@ -441,11 +452,17 @@ class HomeEventsPanel extends HTMLElement {
    * which in this house is several a second, so this recomputes on a trailing
    * second - live enough to watch, cheap enough to ignore. */
   _laterReflect() {
-    if (this._reflectTimer || this._mode !== "visual") return;
+    if (this._reflectTimer) return;
+    if (this._mode !== "visual" && this._mode !== "home") return;
     if (!this._el || !this._el.pane) return;
     this._reflectTimer = setTimeout(() => {
       this._reflectTimer = null;
       if (this._mode === "visual") this._reflect();
+      /* The overview's card is the house, so it moves with it. Only the card:
+       * the tiles count what is written down, which no state change alters,
+       * and recomputing every event's matcher once a second to watch four
+       * numbers hold still is work nobody asked for. */
+      else if (this._mode === "home" && this._home) this._home.hass = this._hass;
     }, 1000);
   }
 
@@ -522,9 +539,14 @@ class HomeEventsPanel extends HTMLElement {
     try {
       this._library = await this._fresh();
       this._renderList();
-      const names = Object.keys(this._events());
-      if (names.length) this._openEvent(names[0]);
-      else this._newEvent();
+      /* Nothing is opened. This used to land on Object.keys()[0] - the first
+       * event the store happened to hold, which is not the first one in the
+       * list, because the list is grouped by section. So a reload put the
+       * cursor in an event nobody had chosen, and the next thing typed was
+       * typed into it. An editor with nothing in it is a worse first screen
+       * than one showing the wrong thing only if there is nothing to put
+       * there, and there is: the library, and the card it draws. */
+      this._openHome();
     } catch (err) {
       this._say(this._reason(err), true);
     }
@@ -582,10 +604,11 @@ class HomeEventsPanel extends HTMLElement {
       <div class="app">
         <header class="bar">
           <button class="icon" data-act="menu" title="Sidebar">&#9776;</button>
-          <div class="title">Events<span class="build" title="The build this
+          <button class="title" data-act="home" title="Back to the overview">Events<span
+            class="build" title="The build this
             page is running. Home Assistant fetches a panel module once per
             page load, so an edit to the panel is invisible until a full
-            reload - Ctrl-Shift-R, or Cmd-Shift-R.">${PANEL_BUILD}</span></div>
+            reload - Ctrl-Shift-R, or Cmd-Shift-R.">${PANEL_BUILD}</span></button>
           <span class="grow"></span>
           <button class="ghost" data-act="sections" title="${esc(HELP.sections)}">Sections</button>
           <button class="ghost" data-act="library" title="${esc(HELP.library)}">Whole library</button>
@@ -617,6 +640,7 @@ class HomeEventsPanel extends HTMLElement {
     this._el = {
       list: $(".list"), name: $(".name"), pane: $(".pane"), msg: $(".msg"),
       del: $('[data-act="delete"]'), tabs: $(".tabs"),
+      save: $('[data-act="save"]'), head: $(".ed-head"),
     };
 
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
@@ -683,6 +707,127 @@ class HomeEventsPanel extends HTMLElement {
     }).join("");
   }
 
+  /* ------------------------------------------------------------ the overview */
+
+  /* Where the page starts, and where Delete and the title button lead back to.
+   *
+   * It is not a splash screen. It answers the two questions somebody arriving
+   * here actually has - what is in this library, and what does it look like on
+   * a dashboard right now - using the card itself for the second, the same way
+   * the preview does. */
+  async _openHome(force) {
+    if (!force && !(await this._confirmDiscard())) return;
+    this._mode = "home";
+    this._selected = null;
+    this._renamedFrom = null;
+    this._draft = null;
+    this._editing = null;
+    this._newcat = false;
+    this._newCategory = null;
+    this._setDirty(false);
+    this._el.name.value = "";
+    this._el.name.disabled = true;
+    this._el.head.style.display = "none";
+    this._say("");
+    this._renderList();
+    this._renderPane();
+  }
+
+  /* Counts, from the library rather than from the house: how many events there
+   * are, how many are switched off, how many sections they sit in, and how
+   * much of the house they cover between them. The last one needs the card's
+   * matcher; without it the tile is left out rather than guessed at. */
+  _libraryFacts() {
+    const events = Object.values(this._events());
+    const off = events.filter((e) => e.enabled === false).length;
+    const facts = [
+      [events.length, events.length === 1 ? "event" : "events"],
+      [this._categories().length, "sections"],
+    ];
+    if (off) facts.push([off, "switched off"]);
+    if (this._engine && this._hass) {
+      const ids = new Set();
+      for (const e of events) {
+        if (e.enabled === false) continue;
+        try {
+          for (const id of this._engine.matchEntities(this._hass, {
+            include: clone(e.include),
+            exclude: e.exclude ? clone(e.exclude) : null,
+            registries: { labels: this._reg.labels, floors: this._reg.floors },
+          })) ids.add(id);
+        } catch (err) {
+          /* One unfinished event should not cost the whole tile. */
+        }
+      }
+      facts.push([ids.size, "entities watched"]);
+    }
+    return facts;
+  }
+
+  _homeHtml() {
+    const facts = this._libraryFacts();
+    const empty = !Object.keys(this._events()).length;
+    return `<div class="home">
+      <p class="lede">${empty
+        ? `This library is empty. An event is a rule for what a card should
+           say about part of the house — start with one.`
+        : `Nothing is open. Pick an event on the left to change it, or start
+           a new one.`}</p>
+      <div class="tiles">${facts.map(([n, what]) =>
+        `<div class="tile"><b>${n}</b><span>${esc(what)}</span></div>`).join("")}
+      </div>
+      ${empty ? "" : `
+      <h2>What a card is showing right now</h2>
+      <div data-homecard></div>
+      <p class="hint">A real card, reading this library against the house as it
+        is this second — not a mock-up. What a dashboard shows also depends on
+        that card's own options, so yours may be capped or sorted differently.</p>`}
+      <h2>Where things are</h2>
+      <ul class="ways">
+        <li><b>The list on the left</b> is every event, under the section it
+          files rows into. Click one to edit it.</li>
+        <li><b>New event</b> starts an empty one. It is not written down until
+          it is saved and named.</li>
+        <li><b>Sections</b> is the order the headings come in, what each is
+          called, and how the rows inside one are sorted.</li>
+        <li><b>Whole library</b> is all of it as YAML — how it leaves this
+          machine and how it comes back.</li>
+      </ul>
+    </div>`;
+  }
+
+  /* The card on the overview. Kept between redraws for the same reason the
+   * preview is: a card rebuilt on every state change is a card that flickers
+   * for a living. */
+  _paintHome() {
+    const host = this._el.pane.querySelector("[data-homecard]");
+    if (!host) return;
+    if (!customElements.get("home-event-card")) {
+      host.innerHTML = `<div class="hint">The card is not among this
+        dashboard's resources, so there is nothing here to draw with.</div>`;
+      return;
+    }
+    let card = this._home;
+    if (!card) {
+      card = document.createElement("home-event-card");
+      try {
+        card.setConfig({ ...HOME_CONFIG });
+      } catch (err) {
+        host.innerHTML = `<div class="hint">${esc(this._reason(err))}</div>`;
+        return;
+      }
+      this._home = card;
+    }
+    if (card.parentNode !== host) {
+      host.innerHTML = "";
+      host.appendChild(card);
+    }
+    /* The saved library, handed over rather than fetched, so this shows what
+     * is written down - which is what a dashboard would be reading too. */
+    card.library = this._library;
+    card.hass = this._hass;
+  }
+
   /* --------------------------------------------------------------- opening */
 
   async _openEvent(name) {
@@ -700,6 +845,7 @@ class HomeEventsPanel extends HTMLElement {
     this._newCategory = null;
     this._el.name.value = name;
     this._el.name.disabled = false;
+    this._el.head.style.display = "";
     this._el.del.style.display = "";
     this._el.tabs.style.display = "";
     this._say("");
@@ -741,6 +887,7 @@ class HomeEventsPanel extends HTMLElement {
     this._newCategory = null;
     this._el.name.value = "";
     this._el.name.disabled = false;
+    this._el.head.style.display = "";
     this._el.del.style.display = "none";
     this._el.tabs.style.display = "";
     this._say("Name it, then save. The name is what a card refers to.");
@@ -783,6 +930,7 @@ class HomeEventsPanel extends HTMLElement {
     this._defaultSort = this._library.sort || "";
     this._el.name.value = "Sections";
     this._el.name.disabled = true;
+    this._el.head.style.display = "";
     this._el.del.style.display = "none";
     this._el.tabs.style.display = "none";
     this._setDirty(false);
@@ -874,6 +1022,7 @@ class HomeEventsPanel extends HTMLElement {
       this._draft = null;
       this._el.name.value = "Whole library";
       this._el.name.disabled = true;
+      this._el.head.style.display = "";
       this._el.del.style.display = "none";
       this._el.tabs.style.display = "none";
       this._setDirty(false);
@@ -932,6 +1081,11 @@ class HomeEventsPanel extends HTMLElement {
       t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
     });
 
+    if (this._mode === "home") {
+      this._el.pane.innerHTML = this._homeHtml();
+      this._paintHome();
+      return;
+    }
     if (this._mode === "sections") {
       this._el.pane.innerHTML = this._sectionsHtml();
       const asked = this._el.pane.querySelector(".secrow.asked select");
@@ -2027,6 +2181,7 @@ class HomeEventsPanel extends HTMLElement {
     switch (el.dataset.act) {
       case "save": return this._save();
       case "delete": return this._delete();
+      case "home": return this._openHome();
       case "new": return this._newEvent();
       case "library": return this._openLibrary();
       case "sections": return this._openSections();
@@ -2380,9 +2535,10 @@ class HomeEventsPanel extends HTMLElement {
       });
       this._setDirty(false);
       await this._reload();
-      const names = Object.keys(this._events());
-      if (names.length) await this._openEvent(names[0]);
-      else await this._newEvent();
+      /* Not into whichever event is now first. Something was just deleted;
+       * landing in a neighbour is how the next keystroke edits it. */
+      await this._openHome(true);
+      this._say("Deleted");
     } catch (err) {
       this._say(this._reason(err), true);
     }
@@ -2435,7 +2591,17 @@ const STYLES = `
   background: var(--app-header-background-color, var(--primary-color));
   color: var(--app-header-text-color, #fff);
 }
-.title { font-size: 20px; display: flex; align-items: baseline; gap: 9px; }
+/* A button now, because it goes back to the overview - and one that has to
+   keep looking like the title it already was, since a title that suddenly
+   reads as a control is a control nobody trusts. The hover is the only tell,
+   which is the amount of tell a way back needs. */
+button.title {
+  font: inherit; font-size: 20px; display: flex; align-items: baseline; gap: 9px;
+  background: none; border: 0; padding: 4px 8px; margin-inline-start: -8px;
+  border-radius: 9px; color: inherit; cursor: pointer;
+}
+button.title:hover { background: rgba(255,255,255,.14); }
+button.title:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 /* Readable without hovering, and quiet enough not to be part of the title.
    A panel that has been updated and not reloaded looks exactly like a panel
    that is broken, and that has now cost two rounds of "it does not do that" -
@@ -2498,6 +2664,34 @@ main {
 .list { padding: 8px; overflow: auto; flex: 1; }
 .editor { display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
 .empty { padding: 24px 16px; color: var(--secondary-text-color); line-height: 1.5; }
+
+/* The overview. One column, no surfaces of its own: the editor it sits in is
+   already a card, and a card inside a card is a border for the sake of one. */
+.home { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px 24px; }
+.home .lede { margin: 0; font-size: 15px; line-height: 1.5; max-width: 62ch; }
+.home h2 {
+  margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--secondary-text-color);
+}
+/* Counted things, so the digits line up and the words underneath do not
+   compete with them. */
+.tiles { display: flex; flex-wrap: wrap; gap: 10px; }
+.tile {
+  display: flex; flex-direction: column; gap: 2px; min-width: 104px;
+  padding: 10px 14px; border-radius: 12px;
+  background: rgba(127,127,127,.10);
+}
+.tile b { font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tile span { font-size: 11px; color: var(--secondary-text-color); }
+.home .ways { margin: 0; padding-inline-start: 18px; display: flex;
+  flex-direction: column; gap: 7px; font-size: 13px; line-height: 1.5;
+  color: var(--secondary-text-color); max-width: 70ch; }
+.home .ways b { color: var(--primary-text-color); font-weight: 500; }
+/* The card draws on the dashboard's background, not on the editor's. */
+.home [data-homecard] {
+  background: var(--primary-background-color);
+  border-radius: 14px; padding: 12px; max-width: 560px;
+}
 
 .cat { display: block; width: 100%; text-align: start; font: inherit;
   font-size: 10px; letter-spacing: .1em; text-transform: uppercase;

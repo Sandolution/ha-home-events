@@ -454,6 +454,18 @@ The instant comes from the member rows, not from `last_changed`: a timer's is
 its `finishes_at`, and reading that as an elapsed time is wrong by the whole
 length of the timer.
 
+### And what status it carries
+
+The same rule, one column to the left: **when every member says the same thing,
+the group says it too.** Three fans all reading *Running* make a group that is
+running, and a row saying less than every row inside it reads as a row that
+lost something.
+
+They have to agree. A washer reading *Done*, a dryer reading *Active* and a
+television reading *Playing* have no one word between them, so the group's
+status is left empty — taking the first would be taking whichever entity the
+index happened to reach first. A `status` of your own overrides either way.
+
 ---
 
 ## Interaction
