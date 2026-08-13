@@ -49,10 +49,12 @@ That is a complete, working card. Everything below is optional.
 ### A capped section, and what it looks like
 
 A section held to `max_per_section` in `scroll` mode keeps every row it had —
-the height is what was capped, not the list. The last row on show is deliberately
-half-visible and fades out at the bottom edge: that sliver is what says "there is
-more here", and it reads from across a room where a scrollbar does not. Scroll to
-the last row and the fade goes, because at that point nothing is being withheld.
+the height is what was capped, not the list. The row at the edge is deliberately
+half-visible and fades out: that sliver is what says "there is more this way",
+and it reads from across a room where a scrollbar does not. Both edges do it,
+and each fade goes when its own end of the list is reached — the top one once
+you scroll away from the first row, the bottom one once you arrive at the last.
+A section short enough not to scroll is at both ends at once and fades neither.
 
 There is no "+n more" under a scrolling section. The number would be naming a row
 the card is already showing. `overflow: hide` is the mode that reports a count,

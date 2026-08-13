@@ -376,7 +376,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13g";
+const CARD_BUILD = "2026-08-13h";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2136,7 +2136,7 @@ class HomeEventCard extends HTMLElement {
      * phase - so one listener on the root covers every section, including the
      * ones that do not exist yet. The alternative is re-binding on each
      * repaint, and the card repaints every few seconds in a house this size. */
-    this._root.addEventListener("scroll", (ev) => this._markEnd(ev.target), true);
+    this._root.addEventListener("scroll", (ev) => this._markEdges(ev.target), true);
     this._built = true;
   }
 
@@ -3068,24 +3068,29 @@ class HomeEventCard extends HTMLElement {
     for (const el of this._root.querySelectorAll(".rows[data-sec]")) {
       const y = offsets.get(el.dataset.sec);
       if (y) el.scrollTop = y;
-      this._markEnd(el);
+      this._markEdges(el);
     }
   }
 
-  /* Whether a scrolling section is showing its last row.
+  /* Which ends of a scrolling section are showing a whole row.
    *
-   * The half-visible row at the bottom is the affordance - it says "there is
-   * more here" without a label - but a row sliced through its own text reads
-   * as a broken card rather than as a hint, so the sliver is faded out. That
-   * fade has to go away at the end of the list, where the last row is whole
-   * and fading it would promise a row that is not there.
+   * The half-visible row is the affordance - it says "there is more here"
+   * without a label - but a row sliced through its own text reads as a broken
+   * card rather than as a hint, so the sliver is faded out. Both edges do it:
+   * a scrolled section cuts a row at the top exactly the way it cuts one at
+   * the bottom, and only one of them being softened is the card looking
+   * finished in one direction.
+   *
+   * Each fade has to go away at its own end of the list, where the row is
+   * whole and fading it would promise a row that is not there. A section short
+   * enough not to scroll is at both ends at once, and fades neither.
    *
    * 1px of slack: a fractional row height leaves scrollTop a hair short of the
    * arithmetic, and a permanently-faded last row is the bug this is fixing. */
-  _markEnd(el) {
+  _markEdges(el) {
     if (!el.classList.contains("scroll")) return;
-    const end = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
-    el.classList.toggle("at-end", end);
+    el.classList.toggle("at-start", el.scrollTop <= 1);
+    el.classList.toggle("at-end", el.scrollHeight - el.clientHeight - el.scrollTop <= 1);
   }
 
   /* Escapes the detail line, then re-promotes the one glyph in it that is doing
@@ -3306,18 +3311,27 @@ const STYLES = `
   /* The sliver fades rather than being sliced.
      A row cut through the middle of its own text is indistinguishable from a
      card that has gone wrong; the same row fading out is unmistakably "there
-     is more below". The gradient is on the element's own box, not on the
-     content, so it stays at the bottom edge while the rows move under it.
-     26px covers the .45 of a row that shows, plus a few pixels of the row
-     above so the fade starts before the text it is fading. */
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+     is more that way". The gradient is on the element's own box, not on the
+     content, so it stays at the edge while the rows move under it. 26px covers
+     the .45 of a row that shows, plus a few pixels of the neighbouring row so
+     the fade starts before the text it is fading.
+     Which edges fade is the two variables, so there is one gradient rather
+     than four; a fade of 0 is two stops in the same place, which is no fade. */
+  --fade-top: 0px;
+  --fade-bottom: 26px;
+  --fade: linear-gradient(to bottom,
+    transparent 0, #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)), transparent 100%);
+  -webkit-mask-image: var(--fade);
+  mask-image: var(--fade);
 }
-/* Scrolled to the last row: nothing is being withheld, so nothing fades. */
-.rows.scroll.at-end {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
+/* Scrolled away from the first row: there is something above, so say so the
+   same way the bottom does. */
+.rows.scroll:not(.at-start) { --fade-top: 26px; }
+/* Scrolled to the last row: nothing is being withheld below, so nothing fades
+   there. A section short enough not to scroll is at both ends and fades
+   neither. */
+.rows.scroll.at-end { --fade-bottom: 0px; }
 .rows.scroll::-webkit-scrollbar { width: 4px; }
 .rows.scroll::-webkit-scrollbar-track { background: transparent; }
 .rows.scroll::-webkit-scrollbar-thumb {
