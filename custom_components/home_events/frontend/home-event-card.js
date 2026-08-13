@@ -220,7 +220,8 @@
  *     title         template; defaults to what the domain decided
  *     detail        template for the bottom-left slot, usually the location
  *     status        template for the state word, top right
- *     icon          overrides the entity's own
+ *     icon          overrides the entity's own, and the one Home Assistant
+ *                   would have resolved for it - see _stateIcon
  *
  * ---------------------------------------------------------------------------
  * Filters
@@ -346,7 +347,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-12e";
+const CARD_BUILD = "2026-08-13a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1052,6 +1053,18 @@ const REGISTRY_KINDS = [
   { key: "labels", ws: "config/label_registry/list", id: "label_id" },
   { key: "floors", ws: "config/floor_registry/list", id: "floor_id" },
 ];
+
+/* One level of an icon dictionary: the state's own icon if the dictionary
+ * names that state, the default otherwise. Deliberately the same two lines as
+ * Home Assistant's own getIcon - this exists to agree with what the frontend
+ * draws, and a second opinion about the same entity is worse than none. */
+function iconFromEntry(entry, state) {
+  if (!isPlainObject(entry)) return null;
+  if (state && isPlainObject(entry.state) && entry.state[state]) {
+    return entry.state[state];
+  }
+  return entry.default || null;
+}
 
 /* Globs, as recorder spells them: * is any run, ? is one character. Anchored,
  * so `sensor.sun*` does not match `binary_sensor.sunroom`. Compiled once at
@@ -1868,6 +1881,82 @@ class HomeEventCard extends HTMLElement {
       });
   }
 
+  /* The icon Home Assistant would draw for an entity that carries none.
+   *
+   * `attributes.icon` is only filled when somebody chose an icon - in the
+   * integration's code, or in the entity settings. Everything else is
+   * computed in the browser and never appears in the state at all, which is
+   * why a card reading only the attribute draws a blank ring for entities
+   * Home Assistant itself draws properly. binary_sensor.weather_warning is
+   * the case that found this: device_class `safety`, state `on`, no icon
+   * attribute, and Home Assistant showing mdi:alert-circle from a dictionary
+   * this card had never asked for.
+   *
+   * The dictionaries are per integration and per domain, served over the
+   * websocket, and looked up in core's own order:
+   *
+   *   the entity's translation_key, in its integration's icons
+   *   its device class, in its domain's icons
+   *   its domain's plain default
+   *
+   * Only the first that answers is used, and a domain renderer's own opinion
+   * still wins over all of it - see _decorate. This is the "I have no idea
+   * what this is" case getting a better answer than a circle. */
+  _stateIcon(id, st) {
+    const hass = this._hass;
+    const domain = id.slice(0, id.indexOf("."));
+    const state = st.state;
+    const entry = (hass.entities || {})[id];
+
+    if (entry && entry.translation_key && entry.platform) {
+      const res = this._iconDict("entity", entry.platform);
+      const own = ((res[entry.platform] || {})[domain] || {})[entry.translation_key];
+      const icon = iconFromEntry(own, state);
+      if (icon) return icon;
+    }
+
+    const res = this._iconDict("entity_component", domain);
+    const byClass = res[domain] || {};
+    const deviceClass = (st.attributes || {}).device_class;
+    /* `_` is the domain's own entry: what a sensor with no device class gets.
+     * A device class that names no icon falls through to it rather than to
+     * nothing, which is what core does. */
+    return (
+      (deviceClass && iconFromEntry(byClass[deviceClass], state)) ||
+      iconFromEntry(byClass._, state)
+    );
+  }
+
+  /* One icon dictionary, asked for once and only for the integrations and
+   * domains actually on screen. Empty until it lands; when it does, the
+   * signature is dropped so the next paint uses it. */
+  _iconDict(category, integration) {
+    const key = category + ":" + integration;
+    this._iconDicts = this._iconDicts || {};
+    if (this._iconDicts[key]) return this._iconDicts[key];
+    const hass = this._hass;
+    if (typeof hass.callWS !== "function") return {};
+    this._iconPending = this._iconPending || {};
+    if (this._iconPending[key]) return {};
+    this._iconPending[key] = true;
+    hass
+      .callWS({ type: "frontend/get_icons", category, integration: [integration] })
+      .then((res) => {
+        this._iconDicts[key] = (res && res.resources) || {};
+      })
+      /* A core that does not serve them, or an integration with none: the
+       * empty answer is cached too, so this is asked once either way. */
+      .catch(() => {
+        this._iconDicts[key] = {};
+      })
+      .then(() => {
+        this._iconPending[key] = false;
+        this._sig = null;
+        this._render();
+      });
+    return {};
+  }
+
   /* Both spellings of every registry name that reaches this entity, as slugs,
    * so the filter side stays a plain compare and the ladder does not need to
    * know that things have an id and a name.
@@ -2216,7 +2305,11 @@ class HomeEventCard extends HTMLElement {
       key: id,
       category: cfg.category || GENERIC_CATEGORY,
       severity: "info",
-      icon: a.icon || "mdi:circle-outline",
+      /* The entity's own icon, then the one Home Assistant would have drawn
+       * for it, then a ring. A domain renderer overwrites this with its own
+       * choice a moment later; this is what the domains nobody wrote a
+       * renderer for get, which is most of the house. */
+      icon: a.icon || this._stateIcon(id, st) || "mdi:circle-outline",
       title: parts.name,
       sub: area,
       area: area || null,

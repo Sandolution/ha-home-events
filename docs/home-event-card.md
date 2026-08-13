@@ -228,6 +228,38 @@ not compile leaves the text alone and says so once in the browser console.
 Deliberately not Jinja: a template that needs branching is a template sensor,
 which can be tested in the template editor and reused elsewhere.
 
+### Where a row's icon comes from
+
+Four answers, first one wins:
+
+| | |
+|---|---|
+| 1 | the event's own `icon:`, if it sets one |
+| 2 | the domain's renderer, for the seven domains that have one — a cooling heat pump is a snowflake, not a thermostat |
+| 3 | the entity's `icon` attribute, if somebody chose one |
+| 4 | **whatever Home Assistant would have drawn**, resolved the way core resolves it |
+
+(4) is worth knowing about, because it is not in the entity's state.
+`attributes.icon` is filled only when an icon was *chosen* — by the
+integration's code, or in the entity settings. Everything else Home Assistant
+shows is computed in the browser from dictionaries fetched over the websocket,
+so a card reading only the attribute draws a blank ring for entities Home
+Assistant itself draws properly.
+
+The case that found this: `binary_sensor.weather_warning` — `device_class:
+safety`, state `on`, no icon attribute, and core drawing `mdi:alert-circle`
+from a table this card had never asked for.
+
+The card now asks, in core's own order: the entity's `translation_key` in its
+integration's icons, then its device class in its domain's icons, then the
+domain's plain default. Asked once per integration and per domain, and only
+for the ones actually on screen; the answer arrives a moment after the first
+paint and the row redraws.
+
+A domain with its own renderer keeps its icon — (2) beats (4) — because those
+seven were written to say something core does not. Everything else, which is
+most of a house, now matches the rest of the frontend.
+
 ### One wording or two
 
 An event that groups may word `title`, `status` and `icon` twice — once for a
