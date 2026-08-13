@@ -36,14 +36,36 @@ That is a complete, working card. Everything below is optional.
 | `sort` | `"recent"` | `recent`, `duration` or `name`. Overrides whatever the library says; leave it out to follow the library. |
 | `max` | `14` | Hard cap on rows. The rest become a "+n more" line, which is more honest than a scrollbar on a wall tablet where nobody scrolls. |
 | `max_per_section` | `0` | Rows a section shows before it overflows. `0` leaves sections uncapped. A global cap alone starves: fifteen appliance rows push every other section off the card, and the ones that vanish are the ones you were not thinking about. |
-| `overflow` | `"scroll"` | What happens past that limit — `scroll` keeps them reachable, `hide` drops them and reports a count. |
+| `overflow` | `"scroll"` | What happens past that limit — `scroll` keeps them reachable, `hide` drops them and reports a count. Only `hide` writes a "+n more" line: a scrolling section still has every row it had. |
 | `hide_when_empty` | `false` | A card that vanishes leaves a hole in a sections layout, and a hole reads as a broken card rather than as a quiet house. |
 | `max_height` | `null` | A ceiling for the whole card, past which it scrolls. A bare number is pixels. `max` caps by row count, which is the unit to use when you know what a row is worth; this is the one for when what you know is how much wall you have. |
+
 | `collapsible` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
 | `promote_alerts` | `"alerts"` | A section id, or `false` — anything red is filed there rather than under its own section. Only applies to `group_by: category`. |
 | `split_sections` | `true` | One card per section, separated by a gap. Turn it off for `group_by: area`, which otherwise makes a card per room. |
 | `tidy_names` | `false` | Let the card rewrite friendly names. Off. See below. |
 | `text` | see below | Every string the card writes itself. |
+
+### A capped section, and what it looks like
+
+A section held to `max_per_section` in `scroll` mode keeps every row it had —
+the height is what was capped, not the list. The last row on show is deliberately
+half-visible and fades out at the bottom edge: that sliver is what says "there is
+more here", and it reads from across a room where a scrollbar does not. Scroll to
+the last row and the fade goes, because at that point nothing is being withheld.
+
+There is no "+n more" under a scrolling section. The number would be naming a row
+the card is already showing. `overflow: hide` is the mode that reports a count,
+because that is the mode where rows are actually missing.
+
+**Neither height ceiling applies under 600px wide.** `max_height` and a capped
+section both turn part of the page into a scroll container, and on a touch screen
+a scroll container is where the page stops scrolling — the gesture latches to
+whatever is under the finger, and with a capped section under most of the card
+there is nowhere left to start a swipe. On a tablet on a wall that trade is the
+whole point: the card holds still, and a wheel or a scrollbar reaches the rest.
+On a handset the page scrolls perfectly well by itself, so the card is simply as
+tall as it is. `max` still caps the total rows either way.
 
 ### Names and locations
 

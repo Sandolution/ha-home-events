@@ -137,13 +137,19 @@
  *                    says; leave it out to follow the library
  *   max:             integer, default 14; the rest become a "+n more" line
  *   max_per_section: rows a section shows before overflowing, 0 = uncapped
- *   overflow:        scroll | hide — what happens to the rest
+ *   overflow:        scroll | hide — what happens to the rest. Only `hide`
+ *                    draws a "+n more" line; a scrolling section is showing
+ *                    every row it has
  *   hide_when_empty: bool, default false
  *   max_height:      a ceiling for the whole card, past which it scrolls.
  *                    A bare number is pixels. `max` and `max_per_section` cap
  *                    by row count, which is the unit to use when you know what
  *                    a row is worth; this is the one for when what you know is
  *                    how much wall you have
+ *
+ * Both height ceilings are withdrawn under 600px wide: on a handset the page
+ * is what scrolls, and a scroll container under the finger is a page that has
+ * stopped scrolling. `max` still caps the rows either way.
  *   collapsible:     bool, default false — section headings fold their rows.
  *                    What is folded is a reading position, not a preference,
  *                    so it is not remembered across a reload
@@ -370,7 +376,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13f";
+const CARD_BUILD = "2026-08-13g";
 
 /* ------------------------------------------------------------------ config */
 
@@ -547,7 +553,10 @@ const DEFAULTS = {
    *
    * Scrolling wins here because the truncated rows are not noise - they are
    * the same kind of thing as the ones above them, and a glance panel that
-   * says "4 more" without a way to see them is asking you to go elsewhere. */
+   * says "4 more" without a way to see them is asking you to go elsewhere.
+   *
+   * The count belongs to `hide` alone. A scrolling section has every row it
+   * ever had, so there is no number to report. */
   overflow: "scroll",
   /* A card that vanishes leaves a hole in a sections layout, and a hole reads
    * as a broken card rather than as a quiet house. Off by default. */
@@ -556,7 +565,7 @@ const DEFAULTS = {
    * scrolls. `max` and `max_per_section` cap by row count, which is the right
    * unit when you know what a row is worth; this is the right one when what
    * you know is how much wall you have. Null leaves the card its natural
-   * height. */
+   * height, and so does a viewport under 600px wide - see the stylesheet. */
   max_height: null,
   /* Section headings toggle their rows. Off by default: a heading that
    * swallows the list when a sleeve brushes the tablet is a worse card than
@@ -2123,6 +2132,11 @@ class HomeEventCard extends HTMLElement {
     this._root = this.shadowRoot.querySelector(".root");
     this._root.addEventListener("click", this._onClick);
     this._root.addEventListener("keydown", this._onKey);
+    /* A scroll event does not bubble, but it does pass through the capture
+     * phase - so one listener on the root covers every section, including the
+     * ones that do not exist yet. The alternative is re-binding on each
+     * repaint, and the card repaints every few seconds in a house this size. */
+    this._root.addEventListener("scroll", (ev) => this._markEnd(ev.target), true);
     this._built = true;
   }
 
@@ -2824,9 +2838,16 @@ class HomeEventCard extends HTMLElement {
     for (const s of sections) {
       if (s.id === "alerts") continue;
       if (s.events.length <= cap) continue;
-      s.over = s.events.length - cap;
-      if (scroll) s.scrollTo = cap;
-      else s.events = s.events.slice(0, cap);
+      if (scroll) {
+        /* No count under a scrolling section. Nothing was taken away - the
+         * rows are all in the DOM and the height is what was capped - so a
+         * "+1 more" line under a row that is visibly half-there is the card
+         * contradicting itself: it names a row it is already showing. */
+        s.scrollTo = cap;
+      } else {
+        s.over = s.events.length - cap;
+        s.events = s.events.slice(0, cap);
+      }
     }
     return sections;
   }
@@ -2978,6 +2999,11 @@ class HomeEventCard extends HTMLElement {
     const fold = this._config.collapsible;
     const blocks = sections.map((s, i) => {
       const shut = fold && this._folded.has(s.id);
+      /* The number beside the heading is how many are happening, not how many
+       * are drawn. In hide mode the rows past the cap have already been taken
+       * out of s.events, and a heading reading 4 above a "+1 more" line would
+       * be answering a question nobody asked. */
+      const n = s.events.length + (s.over || 0);
       const head = s.label
         ? `<div class="sec${fold ? " fold" : ""}${shut ? " shut" : ""}"` +
           (fold
@@ -2987,7 +3013,7 @@ class HomeEventCard extends HTMLElement {
           `>` +
           (fold ? `<ha-icon class="chv" icon="mdi:chevron-down"></ha-icon>` : "") +
           `<span class="lab">${esc(s.label)}</span>` +
-          `<span class="cnt">${s.events.length}</span></div>`
+          `<span class="cnt">${n}</span></div>`
         : "";
       if (shut) return split ? `<div class="card shut">${head}</div>` : head;
       /* A scrolling section is bounded by row count, not by pixels: --max
@@ -3024,11 +3050,16 @@ class HomeEventCard extends HTMLElement {
 
     /* A ceiling on the whole card rather than on any one section. A bare
      * number is pixels, because that is what anybody writing `max_height: 420`
-     * means; anything else is passed through as the CSS length it looks like. */
+     * means; anything else is passed through as the CSS length it looks like.
+     *
+     * It lands on a custom property rather than on `style.maxHeight`, because
+     * the stylesheet has to be able to withdraw it on a phone - and an inline
+     * style outranks every rule in the sheet, media query or not. */
     const cap = this._config.max_height;
-    this._root.style.maxHeight = cap == null || cap === "" ? ""
+    const height = cap == null || cap === "" ? ""
       : (typeof cap === "number" || /^\d+$/.test(String(cap)) ? cap + "px" : String(cap));
-    this._root.classList.toggle("bounded", !!this._root.style.maxHeight);
+    this._root.style.setProperty("--max-h", height || "none");
+    this._root.classList.toggle("bounded", !!height);
 
     this._root.innerHTML = split
       ? blocks.join("")
@@ -3037,7 +3068,24 @@ class HomeEventCard extends HTMLElement {
     for (const el of this._root.querySelectorAll(".rows[data-sec]")) {
       const y = offsets.get(el.dataset.sec);
       if (y) el.scrollTop = y;
+      this._markEnd(el);
     }
+  }
+
+  /* Whether a scrolling section is showing its last row.
+   *
+   * The half-visible row at the bottom is the affordance - it says "there is
+   * more here" without a label - but a row sliced through its own text reads
+   * as a broken card rather than as a hint, so the sliver is faded out. That
+   * fade has to go away at the end of the list, where the last row is whole
+   * and fading it would promise a row that is not there.
+   *
+   * 1px of slack: a fractional row height leaves scrollTop a hair short of the
+   * arithmetic, and a permanently-faded last row is the bug this is fixing. */
+  _markEnd(el) {
+    if (!el.classList.contains("scroll")) return;
+    const end = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+    el.classList.toggle("at-end", end);
   }
 
   /* Escapes the detail line, then re-promotes the one glyph in it that is doing
@@ -3142,6 +3190,7 @@ const STYLES = `
    container has to be the root rather than any one card - bounding a card
    instead would clip a section and leave the gap floating. */
 .root.bounded {
+  max-height: var(--max-h, none);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -3254,12 +3303,45 @@ const STYLES = `
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--divider-color, rgba(255,255,255,.14)) transparent;
+  /* The sliver fades rather than being sliced.
+     A row cut through the middle of its own text is indistinguishable from a
+     card that has gone wrong; the same row fading out is unmistakably "there
+     is more below". The gradient is on the element's own box, not on the
+     content, so it stays at the bottom edge while the rows move under it.
+     26px covers the .45 of a row that shows, plus a few pixels of the row
+     above so the fade starts before the text it is fading. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
+/* Scrolled to the last row: nothing is being withheld, so nothing fades. */
+.rows.scroll.at-end {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 .rows.scroll::-webkit-scrollbar { width: 4px; }
 .rows.scroll::-webkit-scrollbar-track { background: transparent; }
 .rows.scroll::-webkit-scrollbar-thumb {
   background: var(--divider-color, rgba(255,255,255,.14));
   border-radius: 2px;
+}
+
+/* A phone has no wall.
+   Both ceilings above turn a region of the page into a scroll container, and
+   on a touch screen a scroll container is where the page stops scrolling: the
+   gesture latches to whatever is under the finger, and with a capped section
+   under most of the card there is nowhere left to start a swipe. Worth it on a
+   tablet on a wall, where the point is that the card holds still and a mouse
+   wheel or a scrollbar reaches the rest. Not worth it on a handset, where the
+   page itself scrolls and the card can simply be as tall as it is.
+   The max option still caps the card's total rows, so this cannot run away. */
+@media (max-width: 600px) {
+  .root.bounded { max-height: none; overflow-y: visible; }
+  .rows.scroll {
+    max-height: none;
+    overflow-y: visible;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 
 /* The four-quadrant row: icon | title over detail | status over time. */
