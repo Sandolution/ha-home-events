@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-13b";
+const PANEL_BUILD = "2026-08-13c";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -185,6 +185,9 @@ const FILTER_EXAMPLES = [
   ["{name|s/ [|] (State|Error|Status)$//}",
    "Kitchen | Dishwasher | State", "Kitchen | Dishwasher",
    "drop the machine word an integration put on the end"],
+  ["{name|s/^[^|]+[|] | [|] (State|Error|Status)$//g}",
+   "Ground Floor | Air Purifier | Error", "Air Purifier",
+   "both at once — two alternatives and g, since a slot gets one replace"],
   ["{name|s/\\s*[|]\\s*/ — /g}",
    "Kitchen | Dishwasher | State", "Kitchen — Dishwasher — State",
    "every pipe becomes a dash — that is what g is for"],

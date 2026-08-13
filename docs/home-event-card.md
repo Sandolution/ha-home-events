@@ -66,9 +66,25 @@ the one string somebody wrote themselves is worse than not guessing.
 To shorten a name, say so — the template filter is per event and exact:
 
 ```yaml
-title: "{name|s/^[^|]+[|] //}"          # Ground Floor | Air Purifier → Air Purifier
-title: "{name|s/ [|] Timer$//}"         # … | Ventilation | Timer → … | Ventilation
+# Ground Floor | Air Purifier → Air Purifier
+title: "{name|s/^[^|]+[|] //}"
+
+# … | Ventilation | Timer → … | Ventilation
+title: "{name|s/ [|] Timer$//}"
+
+# both at once: Ground Floor | Air Purifier | Error → Air Purifier
+title: "{name|s/^[^|]+[|] | [|] (State|Error|Status)$//g}"
 ```
+
+A slot gets **one** replace, so "drop the front and the back" is one pattern
+with two alternatives and the `g` flag — not two patterns.
+
+Note what the third one deliberately does *not* do. It drops a listed word,
+not "whatever the third segment is", because a third segment is often the only
+thing telling two rows apart: `Garden | Irrigation | Border | State` and
+`Garden | Irrigation | Grass | State` become **Irrigation · Border** and
+**Irrigation · Grass**, where a keep-the-second-segment pattern would make
+both of them *Irrigation* and leave you with two identical rows.
 
 **Write a literal pipe as `[|]`, not `\|`.** A bare `|` means alternation. An
 escaped one is correct right up until something escapes it a second time, and
