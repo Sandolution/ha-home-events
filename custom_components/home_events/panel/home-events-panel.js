@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12j";
+const PANEL_BUILD = "2026-08-12l";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -2506,7 +2506,18 @@ textarea.yaml {
 
 /* A fieldset per question. The rules are the only structure - a card inside a
    card would be a second surface for no reason. */
+/* Separators, and only separators.
+   A rule between two parts of a form is there to say where one ends, and it
+   does that at half the weight the theme's divider paints at - on this theme
+   a full divider measures 13 luma over the pane and this measures 6, which is
+   still a line and no longer a fence. Stated as a mix of the theme's own
+   colour so it follows the theme, and stated twice so a browser that does not
+   know color-mix keeps the plain one.
+   Control borders are not in here: an input whose edge has faded is an input
+   nobody can find. */
 .fs { border-top: 1px solid var(--divider-color, rgba(127,127,127,.18)); padding: 16px 0 10px; }
+.fs { border-top-color: color-mix(in srgb,
+  var(--divider-color, rgba(127,127,127,.18)) 55%, transparent); }
 .fs:first-child { border-top: 0; padding-top: 2px; }
 .legend { font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
   color: var(--secondary-text-color); margin-bottom: 14px;
@@ -2549,7 +2560,14 @@ textarea.yaml {
   display: flex; gap: 2px; padding: 2px 0 0; margin-bottom: 14px;
   position: sticky; top: 0; z-index: 6;
   background: var(--card-background-color, #fff);
+  /* Lighter than a plain divider: the rule is here to say where the pane
+     starts, and the open tab's accent is doing the pointing. Mixed from the
+     theme's own divider rather than picked, so it still follows the theme -
+     and stated twice, because a browser that does not know color-mix drops
+     the second line and keeps the first. */
   border-bottom: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  border-bottom-color: color-mix(in srgb,
+    var(--divider-color, rgba(127,127,127,.3)) 55%, transparent);
 }
 /* An inactive tab is a label with nothing around it; the open one is a shape.
    It takes the pane's own background and a border on three sides, and its
@@ -2576,6 +2594,8 @@ textarea.yaml {
   font-weight: 500;
   background: var(--card-background-color, #fff);
   border-color: var(--divider-color, rgba(127,127,127,.3));
+  border-color: color-mix(in srgb,
+    var(--divider-color, rgba(127,127,127,.3)) 55%, transparent);
   box-shadow: inset 0 2px 0 0 var(--primary-color);
 }
 .subtab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
@@ -2745,6 +2765,8 @@ textarea.yaml {
 .count .ok { color: var(--success-color, #5cb87f); font-weight: 500; }
 .count .dim, .dim { color: var(--secondary-text-color); }
 .matches { margin-top: 8px; border-top: 1px solid var(--divider-color, rgba(127,127,127,.18));
+  border-top-color: color-mix(in srgb,
+    var(--divider-color, rgba(127,127,127,.18)) 55%, transparent);
   padding-top: 8px; max-height: 260px; overflow: auto; }
 .mroom { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--secondary-text-color); padding: 10px 0 4px; }
@@ -2789,6 +2811,8 @@ textarea.yaml {
 /* The syntax, at the bottom of the tab that uses it. Shut until it is wanted:
    it is a reference, and a reference that is always open is a wall. */
 .cheat { margin: 18px 0 4px; border-top: 1px solid var(--divider-color, rgba(127,127,127,.18));
+  border-top-color: color-mix(in srgb,
+    var(--divider-color, rgba(127,127,127,.18)) 55%, transparent);
   padding-top: 12px; }
 .cheat summary { cursor: pointer; font-size: 13px; color: var(--secondary-text-color);
   list-style: none; display: flex; align-items: center; gap: 7px; }
