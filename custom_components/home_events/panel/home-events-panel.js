@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12i";
+const PANEL_BUILD = "2026-08-12j";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -2551,12 +2551,21 @@ textarea.yaml {
   background: var(--card-background-color, #fff);
   border-bottom: 1px solid var(--divider-color, rgba(127,127,127,.3));
 }
+/* An inactive tab is a label with nothing around it; the open one is a shape.
+   It takes the pane's own background and a border on three sides, and its
+   bottom edge - painted after the strip's rule, because a child paints over
+   its parent - covers the rule for exactly its own width. That break is the
+   whole illusion: the tab and the pane below it are one surface, and the two
+   beside it are not. The accent caps the top rather than underlining the
+   bottom, because the bottom is where the tab joins the pane and a line there
+   would be the seam it is trying not to have. */
 .subtab {
   display: flex; align-items: baseline; gap: 7px;
-  padding: 9px 14px 8px; font-size: 14px; border-radius: 8px 8px 0 0;
+  padding: 9px 15px 9px; font-size: 14px;
+  border-radius: 9px 9px 0 0;
   color: var(--secondary-text-color);
-  border: 0; border-bottom: 2px solid transparent;
-  margin-bottom: -1px; /* over the rule, so the active tab can break it */
+  border: 1px solid transparent; border-bottom: 0;
+  margin-bottom: -1px; /* over the rule, so the open tab can break it */
 }
 .subtab:hover:not(.on) {
   color: var(--primary-text-color);
@@ -2564,8 +2573,10 @@ textarea.yaml {
 }
 .subtab.on {
   color: var(--primary-text-color);
-  border-bottom-color: var(--primary-color);
   font-weight: 500;
+  background: var(--card-background-color, #fff);
+  border-color: var(--divider-color, rgba(127,127,127,.3));
+  box-shadow: inset 0 2px 0 0 var(--primary-color);
 }
 .subtab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
 /* What is in that tab, said quietly enough to stay a tab label. The one that
