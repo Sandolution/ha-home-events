@@ -36,7 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN] = store
 
     async_register(hass)
-    await async_register_panel(hass)
+    entry.async_on_unload(await async_register_panel(hass))
     return True
 
 
