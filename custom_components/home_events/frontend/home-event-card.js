@@ -376,7 +376,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13h";
+const CARD_BUILD = "2026-08-13i";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2475,6 +2475,29 @@ class HomeEventCard extends HTMLElement {
       const members = kept;
       const n = members.length;
       const label = b.area || humanise(name);
+      /* The group's clock, taken from the rows inside it rather than from the
+       * entities' last_changed.
+       *
+       * A member's `at` is not always a start: a timer's is `finishes_at`, and
+       * reading that instant as "how long has this been so" is off by the
+       * whole length of the timer. Worse, the two point opposite ways, so a
+       * group of timers with `time_mode: remaining` was counting down to a
+       * moment that had already passed and saying "any moment" under two rows
+       * that plainly had minutes left.
+       *
+       * So the direction is settled first - the author's word if there is one,
+       * otherwise what the members agree on - and the instant is chosen to
+       * match it. Counting down, the group is this way until its *last* member
+       * finishes; elapsing, since its first began. Both are the same question
+       * asked of the group rather than of any one row in it. */
+      const modes = new Set(members.map((m) => m.mode));
+      const gmode = cfg.time_mode ||
+        (modes.size === 1 ? [...modes][0] : "since");
+      const counting = gmode === "until" || gmode === "remaining";
+      const stamps = members.map((m) => m.at).filter((v) => isFinite(v));
+      const at = stamps.length
+        ? (counting ? Math.max(...stamps) : Math.min(...stamps))
+        : (isFinite(b.at) ? b.at : null);
       const vars = { n: n, name: label, area: b.area || "" };
       const e = {
         key: name + ":" + (b.area || "all"),
@@ -2485,10 +2508,8 @@ class HomeEventCard extends HTMLElement {
         sub: "",
         area: b.area,
         status: "",
-        /* The oldest of the group: how long the area has been this way, not
-         * how long ago the last one joined in. */
-        at: isFinite(b.at) ? b.at : null,
-        mode: "since",
+        at,
+        mode: gmode,
         /* Not b.ids[0]. A grouped row is about the group; opening the first
          * lamp the index happened to reach is answering a question nobody
          * asked. `members` is what a click gets instead - see _handleClick. */

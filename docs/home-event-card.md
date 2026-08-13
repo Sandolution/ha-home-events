@@ -258,7 +258,7 @@ appended, so that list arranges sections rather than registering them.
 | `category` | Which section the rows go in. Omit it for the generic section. |
 | `group` | `false`, `"area"` (one row per room) or `"all"` (one row for the lot). `true` is the old spelling of `area`. |
 | `severity` | `alert`, `attention`, `active` or `info` — the colour of the dot, and where it sorts. |
-| `time_mode` | `since`, `until`, `ago` or `remaining`. |
+| `time_mode` | `since`, `until`, `ago` or `remaining`. On a grouped row it also decides *which* of the group's instants is shown — see below. |
 | `show_time` | Whether the row carries a time at all. |
 | `title` `detail` `status` `icon` | How the row reads. See below. |
 | `enabled` | `false` keeps the event in the library and draws it on no card. |
@@ -435,6 +435,24 @@ Two things change it, and both are deliberate:
 
 So an empty detail line on a grouped row means nothing was asked for. It is
 not the card declining to draw one.
+
+### What time a grouped row is telling
+
+A group has as many instants as it has members, and it shows one of them. Which
+one follows the direction the row is reading in:
+
+| direction | the group shows |
+|---|---|
+| `since`, `ago` — counting up | the **earliest** — when the first member started, so the number is how long the group has been this way |
+| `until`, `remaining` — counting down | the **latest** — when the last member finishes, so the number is how long the group will go on |
+
+The direction is `time_mode` if the event names one, and otherwise whatever the
+members agree on — a group of timers counts down without being told to, because
+timers do. Members that disagree leave the group counting up from the first.
+
+The instant comes from the member rows, not from `last_changed`: a timer's is
+its `finishes_at`, and reading that as an elapsed time is wrong by the whole
+length of the timer.
 
 ---
 
