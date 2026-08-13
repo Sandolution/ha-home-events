@@ -262,16 +262,35 @@ most of a house, now matches the rest of the frontend.
 
 ### One wording or two
 
-An event that groups may word `title`, `status` and `icon` twice — once for a
-row standing for one thing, once for a row that is counting:
+An event that groups may word `title`, `detail`, `status` and `icon` twice —
+once for a row standing for one thing, once for a row that is counting:
 
 ```yaml
-title: {one: Light, many: Lights}
-icon:  {one: "mdi:lightbulb", many: "mdi:lightbulb-multiple"}
+title:  {one: Light, many: Lights}
+detail: {one: "{area}", many: "{n} rooms"}
+icon:   {one: "mdi:lightbulb", many: "mdi:lightbulb-multiple"}
 ```
 
 Only on an event that groups. Without grouping there is nothing to count, so
 the schema refuses the mapping rather than quietly picking one of the two.
+
+A member row inside an open group takes **neither** wording — the mapping
+belongs to the count, and a member is one thing. The key is dropped rather
+than resolved to `one`, so the domain's own value stands.
+
+### Why a grouped row's detail line is usually empty
+
+Because the room is already on its title line. "Kitchen" over "Kitchen" is not
+a second fact, so the line is left empty rather than filled with a repeat.
+
+Two things change it, and both are deliberate:
+
+- give the group a `title` of its own — "Lights" — and the room **moves down**
+  to the detail line, because the title no longer says it
+- write a `detail` template and it is drawn, grouped or not
+
+So an empty detail line on a grouped row means nothing was asked for. It is
+not the card declining to draw one.
 
 ---
 

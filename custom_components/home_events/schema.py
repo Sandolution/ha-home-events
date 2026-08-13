@@ -31,7 +31,7 @@ FILTER_KEYS = [
 ]
 FILTER_OPTS = ["match"]
 # home-event-card.js: PLURAL_KEYS
-PLURAL_KEYS = ["title", "status", "icon"]
+PLURAL_KEYS = ["title", "detail", "status", "icon"]
 # home-event-card.js: SEVERITIES, TIME_MODES, GROUP_MODES
 SEVERITIES = ["alert", "attention", "active", "info"]
 TIME_MODES = ["since", "until", "ago", "remaining"]

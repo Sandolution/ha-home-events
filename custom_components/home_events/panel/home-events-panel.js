@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12l";
+const PANEL_BUILD = "2026-08-13a";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -83,7 +83,7 @@ const DEFAULT_TIME_MODE = "since";
  * or when any does, not when none does. */
 const GROUP_KINDS = ["and", "or", "not"];
 /* The card's PLURAL_KEYS: the slots a counting row may word two ways. */
-const PLURAL_KEYS = ["title", "status", "icon"];
+const PLURAL_KEYS = ["title", "detail", "status", "icon"];
 
 /* Not a section: the option in the list that asks for one. It is a word no
  * category id can be, because a category id is what this form makes of what
@@ -213,12 +213,17 @@ const HELP = {
     "only the first.",
   detail: "The quieter line beside the title. Usually the room, which is what " +
     "it says if this is left empty. Same placeholders and the same " +
-    "s/pattern/replacement/ filter as Title.",
+    "s/pattern/replacement/ filter as Title.\n\n" +
+    "A row that groups is the exception: it says the room on its title line " +
+    "already, so leaving this empty leaves the line empty rather than saying " +
+    "the room twice. Give the group a Title of its own and the room moves " +
+    "down here. Anything written here is drawn either way.",
   status: "What the row says on the right: what the entity is doing. Left " +
     "empty, the domain decides. Same placeholders and the same " +
     "s/pattern/replacement/ filter as Title.",
   icon: "The icon at the start of the row. Left empty, the entity's own icon " +
-    "is used, or the domain's.",
+    "is used - and where it has none, the one Home Assistant would have " +
+    "drawn for it, from its device class or its integration.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
     "count up from the last change, until and remaining count down to what is " +
     "next.",

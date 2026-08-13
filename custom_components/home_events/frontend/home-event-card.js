@@ -289,10 +289,10 @@
  * needs an `if` is a template sensor, which can be tested in the template
  * editor and reused somewhere else.
  *
- * A grouped event counts, so it may need two wordings. `title`, `status` and
- * `icon` take a `one`/`many` mapping, and only when the event groups -
- * ungrouped there is nothing to count and a mapping is a mistake worth
- * naming:
+ * A grouped event counts, so it may need two wordings. `title`, `detail`,
+ * `status` and `icon` take a `one`/`many` mapping, and only when the event
+ * groups - ungrouped there is nothing to count and a mapping is a mistake
+ * worth naming:
  *
  *     lights:
  *       group: area
@@ -302,8 +302,10 @@
  *         one: 1 light on
  *         many: "{n} lights on"
  *
- * A room group says the room on its title line. Give it a `title` of its own
- * and the room moves to the detail line rather than disappearing.
+ * A room group says the room on its title line, which is why its detail line
+ * is empty unless something is written there: repeating the room underneath
+ * itself is not a second fact. Give the group a `title` of its own and the
+ * room moves down to the detail line rather than disappearing.
  *
  * ---------------------------------------------------------------------------
  * Conditions
@@ -383,7 +385,7 @@ const EVENT_KEYS = [
  * only here: everything else that used to take one - severity, time_mode -
  * means writing a second event with its own conditions, which is what those
  * mappings were always describing. */
-const PLURAL_KEYS = ["title", "status", "icon"];
+const PLURAL_KEYS = ["title", "detail", "status", "icon"];
 
 /* How a grouping event collapses its rows.
  *
