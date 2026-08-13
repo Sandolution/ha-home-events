@@ -66,9 +66,24 @@ the one string somebody wrote themselves is worse than not guessing.
 To shorten a name, say so — the template filter is per event and exact:
 
 ```yaml
-title: "{name|s/^[^|]*\\|\\s*//}"     # drop the first segment
-title: "{name|s/\\s*\\|\\s*Timer$//}" # drop a trailing category word
+title: "{name|s/^[^|]+[|] //}"          # Ground Floor | Air Purifier → Air Purifier
+title: "{name|s/ [|] Timer$//}"         # … | Ventilation | Timer → … | Ventilation
 ```
+
+**Write a literal pipe as `[|]`, not `\|`.** A bare `|` means alternation. An
+escaped one is correct right up until something escapes it a second time, and
+`\\|` reads as *a backslash, or nothing* — which matches the empty side and
+eats whatever came next, with no error:
+
+| written | on `Ground Floor \| Air Purifier \| Error` |
+|---|---|
+| `s/^[^\|]+[\|] //` | `Air Purifier \| Error` |
+| `s/^[^\|]+\\| //` | `Air Purifier \| Error` |
+| `s/^[^\|]+\\\\| //` | `GroundFloor \| Air Purifier \| Error` ← one space gone |
+
+In a character class it can only ever be a pipe, so it survives being typed
+into a form, pasted into single-quoted YAML, or copied through anything else
+that has opinions about backslashes.
 
 #### tidy_names
 
@@ -263,14 +278,19 @@ A `|` inside the braces runs a replacement on what was read, written as
 `s/pattern/replacement/flags`:
 
 ```yaml
-title: "{name|s/ · (State|Error|Status)$//}"
+title: "{name|s/ [|] (State|Error|Status)$//}"
 ```
 
-`{name}` joins the parts of a piped friendly name with `·`, which is why that
-pattern looks for one. Only the first `|` separates, so a pattern may contain
-alternation. After the last slash, `i` ignores case and `g` replaces every
-match instead of the first. There is no case conversion. A pattern that will
-not compile leaves the text alone and says so once in the browser console.
+`{name}` is the friendly name exactly as Home Assistant has it, pipes and all,
+which is why these patterns look for them — and why a literal pipe wants to be
+`[|]` rather than `\|`, as above. Only the *first* `|` separates the name from
+the pattern, so a pattern may still contain alternation. After the last slash,
+`i` ignores case and `g` replaces every match instead of the first. There is no
+case conversion. A pattern that will not compile leaves the text alone and says
+so once in the browser console.
+
+The examples on the Event Manager's How tab are checked against this card, so
+copying one gives what the page shows it giving.
 
 Deliberately not Jinja: a template that needs branching is a template sensor,
 which can be tested in the template editor and reused elsewhere.

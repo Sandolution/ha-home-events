@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-13a";
+const PANEL_BUILD = "2026-08-13b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -165,15 +165,34 @@ const PLACEHOLDERS = [
 /* Three replacements and what they actually did, on two more invented names
  * of the shape integrations produce: a room, a device, a machine word. The
  * pattern goes after the first | inside the braces. */
+/* Write a literal pipe as [|], never as \| .
+ *
+ * The card draws a name as Home Assistant has it, so patterns about names are
+ * mostly patterns about pipes - and a pipe is the one character here that is
+ * easy to get wrong twice. Bare, it means alternation. Escaped as \| it is
+ * correct until something adds a second backslash on the way in, and then
+ * \\| is "a backslash, or the other thing", which quietly matches the empty
+ * side and eats whatever came next. In a character class it is a pipe and
+ * cannot be anything else.
+ *
+ * Every line here is checked against the card's own interpolation - see
+ * check_examples in the harness - so what this page promises is what the row
+ * will say. */
 const FILTER_EXAMPLES = [
-  ["{name|s/ · (State|Error|Status)$//}",
-   "Dishwasher · State", "Dishwasher",
+  ["{name|s/^[^|]+[|] //}",
+   "Ground Floor | Air Purifier | Error", "Air Purifier | Error",
+   "drop the first segment, when the name starts with somewhere"],
+  ["{name|s/ [|] (State|Error|Status)$//}",
+   "Kitchen | Dishwasher | State", "Kitchen | Dishwasher",
    "drop the machine word an integration put on the end"],
-  ["{attr.friendly_name|s/\\s*\\|\\s*/ — /g}",
+  ["{name|s/\\s*[|]\\s*/ — /g}",
    "Kitchen | Dishwasher | State", "Kitchen — Dishwasher — State",
-   "every | becomes a dash — that is what g is for"],
-  ["{name|s/^(.*) · (.*)$/$2 of $1/}",
-   "Gas · Consumption · Daily", "Daily of Gas · Consumption",
+   "every pipe becomes a dash — that is what g is for"],
+  ["{name|s/^.*[|] //}",
+   "Gas | Consumption | Daily", "Daily",
+   "the last segment on its own"],
+  ["{name|s/^(.*) [|] (.*)$/$2 of $1/}",
+   "Gas | Consumption | Daily", "Daily of Gas | Consumption",
    "$1 and $2 are whatever the brackets caught"],
 ];
 
@@ -1235,14 +1254,21 @@ class HomeEventsPanel extends HTMLElement {
             `<span class="exout">${esc(to)}</span></div>` +
             `<div class="dim">${esc(what)}</div></div>`).join("")}
 
-          <div class="hint">Only the first | separates, so a pattern may have
-            alternation in it: <code>s/a|b//</code> is one replacement, not two.
-            After the last slash, <b>i</b> ignores case and <b>g</b> replaces
-            every match instead of the first. There is no case conversion —
-            <code>\\U</code> is just two characters.<br>
-            <b>{name}</b> joins the parts of a piped name with <b>·</b>, which
-            is why these patterns look for one. A pattern that will not compile
-            leaves the text alone and says so in the browser console.</div>
+          <div class="hint"><b>A literal pipe is <code>[|]</code></b> — not
+            <code>\\|</code>. A bare <code>|</code> means alternation, and an
+            escaped one turns into <code>\\\\|</code> the moment anything
+            escapes it twice, which reads as "a backslash, or nothing" and
+            silently eats the next character. In brackets it can only be a
+            pipe.<br>
+            Only the first | separates the name from the pattern, so a pattern
+            may still have alternation in it: <code>s/a|b//</code> is one
+            replacement, not two. After the last slash, <b>i</b> ignores case
+            and <b>g</b> replaces every match instead of the first. There is no
+            case conversion — <code>\\U</code> is just two characters.<br>
+            <b>{name}</b> is the friendly name exactly as Home Assistant has
+            it, pipes and all, which is why these patterns look for them. A
+            pattern that will not compile leaves the text alone and says so in
+            the browser console.</div>
         </div>
       </details>`;
   }

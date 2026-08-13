@@ -158,7 +158,7 @@
  *                    room and the words in `text.strip` came off the end -
  *                    which is one house's filing scheme, not a fact, and is
  *                    why it is off. To shorten a name, say so per event:
- *                    `title: "{name|s/^[^|]+\| //}"`
+ *                    `title: "{name|s/^[^|]+[|] //}"`
  *   text:            every string the card writes itself, for translating or
  *                    rewording. Any subset; the rest keep their defaults:
  *
@@ -288,10 +288,15 @@
  *     {n}           how many landed in this row - grouped events only
  *
  * Any of them takes a replace, for names written for the state machine rather
- * than for a person - "Dryer | State" and its kind:
+ * than for a person - "Laundry Room | Dryer | State" and its kind:
  *
- *     title: "{name|s/ · State$//}"
+ *     title: "{name|s/ [|] State$//}"
  *     status: "{attr.program|s/^p_//}"
+ *
+ * A literal pipe is written [|], not \| . Bare it means alternation, and
+ * escaped it is one stray backslash away from "a backslash, or nothing" -
+ * which matches the empty side and eats the next character with no error.
+ * In a character class it can only be a pipe.
  *
  * One replace per placeholder, JavaScript's own regular expressions and its
  * own flags, $1 in the replacement. Deliberately no branching: a row that
@@ -365,7 +370,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13e";
+const CARD_BUILD = "2026-08-13f";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1332,12 +1337,19 @@ const SEPARATOR = " \u00b7 ";
 /* A replace, on whatever a placeholder produced.
  *
  * Friendly names are written for the state machine and end in the word the
- * integration needed - "Dryer | State", "Air Purifier | Error" - so a row that
- * says "Dryer · State" is saying one word too many. This is the smallest thing
- * that fixes it without becoming a language:
+ * integration needed - "Dryer | State", "Air Purifier | Error" - so a row can
+ * be saying one word too many. The card no longer takes those words off by
+ * itself, which was a guess about somebody's naming; this is the smallest
+ * thing that lets an author take them off exactly:
  *
- *     title:  "{name|s/ · State$//}"
+ *     title:  "{name|s/ [|] State$//}"
  *     status: "{attr.program|s/^p_//}"
+ *
+ * The pipe goes in a character class on purpose. `\|` is correct and fragile:
+ * one more layer of escaping makes it `\\|`, which is a literal backslash
+ * OR the empty alternative, and the empty one matches immediately. The
+ * symptom is a pattern that appears to do almost nothing - one character
+ * missing somewhere unexpected - rather than an error.
  *
  * One replace per placeholder, JavaScript's own regular expressions and its
  * own flags, $1 in the replacement. Deliberately no branching: a row that
