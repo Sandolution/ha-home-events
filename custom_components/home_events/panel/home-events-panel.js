@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-12h";
+const PANEL_BUILD = "2026-08-12i";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -236,6 +236,14 @@ const HELP = {
   library: "The whole library as YAML - sections, defaults and every event. " +
     "Paste one in to replace it.",
   newevent: "Start an event. It covers nothing until you say what it covers.",
+  "tab-what": "Which entities this event is about. Every event needs at " +
+    "least one criterion here - it is the only question with no sensible " +
+    "default, because only you know what the event is for.",
+  "tab-when": "And in which state they have to be. Leave it empty and the " +
+    "event shows every entity it covers, whatever they are doing.",
+  "tab-how": "How the row reads once it appears: which section, how loud, " +
+    "whether it groups, and the words on the line. Everything here has a " +
+    "default, so a new event draws something before it is touched.",
   preview: "The row itself, drawn by the card rather than imitated: a " +
     "home-event-card holding nothing but this event. It shows a sample - one " +
     "of the entities this covers, or a few of them for the counting wording " +
@@ -1082,9 +1090,32 @@ class HomeEventsPanel extends HTMLElement {
     const grouped = d.group === true || d.group === "area" || d.group === "all";
     const cats = this._categories().filter((c) => c !== GENERIC_CATEGORY);
     const sub = this._sub || "what";
-    const tab = (id, label) =>
-      `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}">` +
-      `${esc(label)}</button>`;
+    /* What each one has in it, on the tab itself.
+     *
+     * Three pills read as three buttons that do three unrelated things; a tab
+     * strip reads as one form with three pages, which is what this is - an
+     * event is not finished until all three have been looked at. The note is
+     * the other half of saying so: a tab that says "2 criteria" has been
+     * answered, and one that says "needs one" is the reason Save will refuse.
+     *
+     * When has no note when it is empty, because empty is a real answer
+     * there - "whatever state they are in" - where an empty What is not. */
+    const nCrit = this._critList(d.include || {}).length;
+    const nCond = (d.conditions || []).length;
+    const NOTES = {
+      what: nCrit
+        ? [`${nCrit} criteri${nCrit === 1 ? "on" : "a"}`, ""]
+        : ["needs one", " want"],
+      when: nCond ? [`${nCond} condition${nCond === 1 ? "" : "s"}`, ""] : ["", ""],
+      how: ["", ""],
+    };
+    const tab = (id, label) => {
+      const [note, cls] = NOTES[id];
+      return `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}"` +
+        `${tip(`tab-${id}`)}><span class="subname">${esc(label)}</span>` +
+        (note ? `<span class="subnote${cls}">${esc(note)}</span>` : "") +
+        `</button>`;
+    };
     const tabs = `<div class="subtabs">${tab("what", "What")}` +
       `${tab("when", "When")}${tab("how", "How")}</div>`;
 
@@ -2508,21 +2539,40 @@ textarea.yaml {
 /* Three questions, one at a time, and they stay where they are: the pane
    scrolls under them, so which question you are answering is never something
    you have to scroll back up to check. */
+/* A tab strip, not three pills.
+   Three separated pills read as three buttons doing three unrelated things.
+   Tabs sharing one rule read as one form with three pages, which is what this
+   is: an event is not finished until all three have been looked at. The rule
+   runs the full width and the active tab sits on it, breaking it - that
+   join is what says the pane below belongs to this tab. */
 .subtabs {
-  display: flex; gap: 4px; padding: 2px 0 14px;
+  display: flex; gap: 2px; padding: 2px 0 0; margin-bottom: 14px;
   position: sticky; top: 0; z-index: 6;
   background: var(--card-background-color, #fff);
+  border-bottom: 1px solid var(--divider-color, rgba(127,127,127,.3));
 }
 .subtab {
-  padding: 6px 14px; font-size: 13px; border-radius: 999px;
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 9px 14px 8px; font-size: 14px; border-radius: 8px 8px 0 0;
   color: var(--secondary-text-color);
-  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  border: 0; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; /* over the rule, so the active tab can break it */
+}
+.subtab:hover:not(.on) {
+  color: var(--primary-text-color);
+  background: var(--secondary-background-color, rgba(127,127,127,.08));
 }
 .subtab.on {
   color: var(--primary-text-color);
-  border-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+  border-bottom-color: var(--primary-color);
+  font-weight: 500;
 }
+.subtab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+/* What is in that tab, said quietly enough to stay a tab label. The one that
+   is not quiet is the one that stops a save: an event with nothing under What
+   covers nothing, and the schema refuses it. */
+.subnote { font-size: 11.5px; font-weight: 400; color: var(--secondary-text-color); }
+.subnote.want { color: var(--warning-color, #d9a441); }
 
 /* One criterion, one line. Two areas are two lines, the same as an area and a
    domain are two lines, because they are the same kind of statement. */
