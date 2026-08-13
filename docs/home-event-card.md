@@ -274,34 +274,46 @@ icon:   {one: "mdi:lightbulb", many: "mdi:lightbulb-multiple"}
 Only on an event that groups. Without grouping there is nothing to count, so
 the schema refuses the mapping rather than quietly picking one of the two.
 
-A member row inside an open group takes **neither** wording — the mapping
-belongs to the count, and a member is one thing. The key is dropped rather
-than resolved to `one`, so the domain's own value stands.
+`one` is the wording for a row that **stands for a single entity**, and there
+are two such rows:
 
-`one` is not "how a member reads". It is the wording for a row that **stands
-for one entity** — a group that turned out to hold exactly one. Resolving it
-onto members would give every member the same line, which is the opposite of
-what an opened group is for: `status: {one: "1 light on", many: "{n} lights
-on"}` would put *1 light on* against each of three lamps.
+- a group that turned out to hold exactly one thing
+- **every member inside a group that is open**
 
-### A member never repeats the row above it
+They are the same row drawn in two places, so they read the same way. That is
+what makes the members controllable: `title: {one: "{area}", many:
+"Ventilation"}` gives a group row that says *Ventilation* over members that
+say *Bath Room*, *Kitchen*, *Toilet*.
 
-Two rules, and they are the same rule seen from either end of the row:
+Left unset, `one` falls back to whatever the domain decided — usually the
+entity's own name. Which is worth knowing when entities are named after the
+thing that groups them: `Bath Room | Ventilation | Timer` becomes "Ventilation"
+once the room and the machine word come off, so an unset `one` gives three
+members all reading *Ventilation* under a group reading *Ventilation*. Nothing
+is leaking; they are called that. Set `one` to say something else.
 
-| | |
-|---|---|
-| the **detail** line | under **Kitchen**, a member's own *Kitchen* is dropped |
-| the **title** line | under **Ventilation**, a member's own *Ventilation* is dropped, and its room comes up to take the line |
+**The one place to be careful** is `status`, whose two wordings are usually a
+count: `status: {one: "1 light on", many: "{n} lights on"}` puts *1 light on*
+against each of three lamps in an open group. A `one` that would read badly on
+a member is a `one` not to write.
 
-The second one exists because entities are often named after the thing that
-groups them. `Bath Room \| Ventilation \| Timer` becomes "Ventilation" once
-the room and the machine word come off — so under a group called Ventilation,
-three rows say Ventilation and the only fact on any of them is the room. Now
-they say the room.
+### An empty wording is not a wording
 
-It fires on the repetition and nothing else. A member with a name of its own —
-*Manual Override*, *Hot Water · Active* — keeps it, room and all. A member
-with no room to promote keeps its name too: a name is better than a blank.
+A text box that was never filled in saves as `""`. That means *nothing was
+written*, not *write nothing* — so an empty half is dropped and the card falls
+back, rather than drawing an empty line over the top of what it would have
+said.
+
+This is why `detail: {one: "", many: "Multiple rooms"}` shows the room on a
+group of one instead of a blank second line.
+
+### A row never says the same thing twice
+
+The detail line is for what the title did not already say, so it is dropped
+when the two are equal. `title: {one: "{area}"}` gives *Bath Room* and not
+*Bath Room* over *Bath Room* — the room being where the detail line falls back
+to anyway. Same reason a member's detail drops the room its group already
+names.
 
 ### Why a grouped row's detail line is usually empty
 

@@ -307,10 +307,12 @@
  * itself is not a second fact. Give the group a `title` of its own and the
  * room moves down to the detail line rather than disappearing.
  *
- * `one` is the wording for a row standing for one entity, not for a member of
- * an open group. A member takes neither wording, and it never repeats the row
- * it hangs under: a title equal to the group's is replaced by the member's
- * room, the same way a member's detail line already drops a repeated room.
+ * `one` is the wording for a row standing for a single entity, and there are
+ * two of those: a group that turned out to hold one thing, and every member
+ * inside an open group. So `title: {one: "{area}", many: Ventilation}` reads
+ * Ventilation over Bath Room, Kitchen, Toilet. An empty half is not a wording
+ * - a text box nobody filled in means nothing was written, not write nothing -
+ * and a detail line equal to the title above it is dropped.
  *
  * ---------------------------------------------------------------------------
  * Conditions
@@ -354,7 +356,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13b";
+const CARD_BUILD = "2026-08-13c";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1174,33 +1176,22 @@ function matchesDimension(filter, key, entityId, ctx) {
 
 /* A grouped event's wording, resolved for this many rows. `{one, many}` is
  * the only mapping left in the schema and this is where it collapses, so the
- * render path downstream never has to know it existed. */
+ * render path downstream never has to know it existed.
+ *
+ * An empty half is not a wording. A text box that was never filled in saves
+ * as "", and taking that literally is an instruction to draw an empty line -
+ * which is how a group of one came to show a name and no room, its author
+ * having left `detail.one` blank meaning "I did not write one". Absent and
+ * empty say the same thing here, and the key is dropped so whatever the
+ * domain decided stands. */
 function plural(cfg, n) {
   let out = cfg;
   for (const k of PLURAL_KEYS) {
     if (!isPlainObject(cfg[k])) continue;
     if (out === cfg) out = { ...cfg };
-    out[k] = n === 1 ? cfg[k].one : cfg[k].many;
-  }
-  return out;
-}
-
-/* The same wording, for a row that is not a count.
-
- * `{one, many}` belongs to the group: it exists to say "3 lights on" where a
- * single row would say "1 light on". A member row is one lamp. Dropping the
- * key rather than resolving it to `one` lets the domain renderer's own value
- * stand - which for a light is its own icon and no status at all, the group
- * row above having already said how many there are.
- *
- * A plain string is left alone. That is a per-entity template: `{name}` and
- * `{area}` interpolate against the member, which is exactly right. */
-function singular(cfg) {
-  let out = cfg;
-  for (const k of PLURAL_KEYS) {
-    if (!isPlainObject(cfg[k])) continue;
-    if (out === cfg) out = { ...cfg };
-    delete out[k];
+    const half = n === 1 ? cfg[k].one : cfg[k].many;
+    if (half) out[k] = half;
+    else delete out[k];
   }
   return out;
 }
@@ -2299,6 +2290,14 @@ class HomeEventCard extends HTMLElement {
     if (cfg.severity) e.severity = cfg.severity;
     if (cfg.time_mode) e.mode = cfg.time_mode;
     if (cfg.show_time === false) e.at = null;
+    /* A row never says the same thing twice. The detail line is for what the
+     * title did not already say, so "Bath Room" under "Bath Room" is a line of
+     * nothing - which is exactly what `title: {one: "{area}"}` produces, the
+     * room being where the detail line falls back to anyway.
+     *
+     * Here rather than in ev(), because a member row never reaches ev(): it is
+     * carried inside its group's `members` and drawn from there. */
+    if (e.sub && e.sub === e.title) e.sub = "";
     return e;
   }
 
@@ -2347,19 +2346,20 @@ class HomeEventCard extends HTMLElement {
     const hass = this._hass;
     const text = this._config.text;
     const mode = groupMode(cfg);
-    /* Two different questions, and they had one answer for too long.
+    /* One question, and it had two answers for a while.
      *
-     * `asMember` is a row *inside* an open group: one thing among several, so
-     * the group's counting wording does not belong on it and the domain
-     * renderer's own value should stand - see singular().
+     * `one` is the wording for a row that stands for a single entity, and
+     * there are two such rows: a group that turned out to hold one thing, and
+     * every member inside a group that is open. They are the same row drawn in
+     * two places, so they are worded the same way.
      *
-     * `asOne` is a group that turned out to hold one thing. That row is not a
-     * member of anything; it is the event, standing for one entity, which is
-     * precisely what the author's "if it is one" wording is for. Decorating it
-     * with `asMember` threw that wording away and fell back to the entity's
-     * name, so an event worded "Ventilation active" read "Hot Water" whenever
-     * exactly one thing matched. */
-    const asMember = singular(cfg);
+     * Members used to have the mapping dropped instead, on the reasoning that
+     * `{one, many}` belongs to a count. That reasoning holds for `status` -
+     * "1 light on" against each of three lamps says nothing - and it takes the
+     * author's control away everywhere else: an event whose members should
+     * read "{area}" had no way to say so, because the only slot for it was
+     * being discarded. Uniform beats clever here; a `one` that would read
+     * badly on a member is a `one` not to write. */
     const asOne = plural(cfg, 1);
     const buckets = new Map();
 
@@ -2381,12 +2381,10 @@ class HomeEventCard extends HTMLElement {
     }
 
     for (const b of buckets.values()) {
-      /* Kept with their ids, because a bucket of one has to be decorated a
-       * second time and differently. */
       const kept = [];
       for (const id of b.ids) {
-        const row = this._decorate(name, asMember, id, hass.states[id]);
-        if (row) kept.push([id, row]);
+        const row = this._decorate(name, asOne, id, hass.states[id]);
+        if (row) kept.push(row);
       }
       if (!kept.length) continue;
 
@@ -2396,12 +2394,11 @@ class HomeEventCard extends HTMLElement {
        * the row opening the group would have shown, so nothing is lost by the
        * group never appearing. */
       if (kept.length === 1) {
-        const [id] = kept[0];
-        out.push(ev(this._decorate(name, asOne, id, hass.states[id]) || kept[0][1]));
+        out.push(ev(kept[0]));
         continue;
       }
 
-      const members = kept.map(([, row]) => row);
+      const members = kept;
       const n = members.length;
       const label = b.area || humanise(name);
       const vars = { n: n, name: label, area: b.area || "" };
@@ -2438,28 +2435,6 @@ class HomeEventCard extends HTMLElement {
        * and no way to tell which room either was about. So it moves to the
        * detail line, unless a `detail:` template has claimed that too. */
       if (b.area && row.title !== label && !row.sub) row.sub = b.area;
-      /* And the same rule the other way up, for the title.
-       *
-       * A member that repeats the row it hangs under is a row that says
-       * nothing. The detail line has been de-duplicated since room groups
-       * existed - under Kitchen, a second Kitchen adds nothing - and a title
-       * can repeat just as flatly: three rows called Ventilation under a row
-       * called Ventilation, where the only fact on any of them is the room.
-       *
-       * Nothing is leaking to cause it. Those entities are called
-       * "Bath Room | Ventilation | Timer", so what is left after the room and
-       * the machine word come off really is the group's own name. Whichever
-       * way it arose, the repeat is not worth a line, so the room comes up to
-       * take it and the detail line goes.
-       *
-       * Only where there is a room to promote, and only where it differs -
-       * a member with nowhere to be keeps its name, a name being better than
-       * a blank. */
-      row.members = row.members.map((m) =>
-        m.title === row.title && m.sub && m.sub !== m.title
-          ? { ...m, title: m.sub, sub: "" }
-          : m
-      );
       out.push(ev(row));
     }
   }
