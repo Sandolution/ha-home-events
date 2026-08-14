@@ -444,21 +444,34 @@ in `entity_id` — is normally **dropped**, because a filter that selects it
 selects its members too and drawing both puts the same lamps on the card twice.
 The members win.
 
-**Naming one changes that.** Write its id under `include: {entities: […]}` and
-it becomes the row, with the members that are in the state the event is about
-underneath it:
+**Unless the event does not cover them.** Then there is nothing to draw twice,
+so the group becomes the row and the members that are in the state the event is
+about are drawn inside it. Either of these does it:
 
 ```yaml
-Lights (by room):
-  include: {entities: [light.kitchen_group, light.living_room_group]}
-  conditions: [{condition: state, state: "on"}]
+# by name
+include: {entities: [light.kitchen_group, light.living_room_group]}
+conditions: [{condition: state, state: "on"}]
+
+# or by pattern - the same choice, said for every room at once
+include:
+  domains: [light]
+  entity_globs: ["*_group"]
+  match: all
+conditions: [{condition: state, state: "on"}]
 ```
 
-There is no `group:` to set. Naming the id *is* the choice — there is no other
-reason to write down the id of a thing whose members the card would otherwise
-draw. A group swept up by `domains: [light]` is not that choice and is still
-dropped, which matters where groups nest: expanding every group a filter
-touched would draw one row for the whole building.
+There is no `group:` to set. The filter already says it: an event that selects
+groups and not their contents is an event about groups.
+
+**Nesting needs no rule of its own.** Where groups contain groups — floor
+groups over room groups — the outer ones are covering their own contents and
+step aside; the innermost, whose members are actual lamps, are the rows. So a
+glob over every group in the house draws its rooms, not one row for the
+building.
+
+A group listed by id is always the row, even where a member of it is listed
+beside it. Naming it is unambiguous in a way a pattern is not.
 
 What that gets you:
 

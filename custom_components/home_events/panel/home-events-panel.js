@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-14c";
+const PANEL_BUILD = "2026-08-14d";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -1291,13 +1291,15 @@ class HomeEventsPanel extends HTMLElement {
           })
         : [];
       if (this._engine && this._engine.drawableEntities) {
-        /* A group named in `entities` is a row of its own, with what is inside
-         * it underneath - so it is not what drawableEntities is about. That
-         * predicate answers for groups a filter swept up alongside their own
-         * members, which the card draws instead of them. */
-        const named = new Set(((draft.include || {}).entities) || []);
+        /* A group this event draws as a group is not what drawableEntities is
+         * about: that predicate answers for groups whose members the same
+         * event covers, which the card draws instead of them. Both questions
+         * are the card's own, so both are asked of it. */
         const drawn = new Set(this._engine.drawableEntities(this._hass, ids));
-        ids = ids.filter((id) => drawn.has(id) || named.has(id));
+        const groups = new Set(this._engine.groupRowEntities
+          ? this._engine.groupRowEntities(this._hass, ids, (draft.include || {}).entities)
+          : []);
+        ids = ids.filter((id) => drawn.has(id) || groups.has(id));
       }
     } catch (err) {
       return { ids: [] };
@@ -2158,7 +2160,37 @@ it are underneath it">Grouped</button>
     return `<span class="ok">Matches ${n} ${n === 1 ? "entity" : "entities"}</span>` +
       (n ? `<button class="link" data-act="showmatches">${
         this._showMatches ? "hide" : "show them"}</button>` : "") +
+      this._groupNoteHtml(ids) +
       (this._showMatches ? this._matchesHtml(ids) : "");
+  }
+
+  /* Groups are the one place where what a filter selects and what the card
+   * draws come apart, so the count says so rather than leaving somebody to
+   * find out from an empty card. A group is a row with its members inside,
+   * unless this same event covers those members - then they are the rows and
+   * it steps aside.
+   *
+   * The card answers both halves; the panel only asks. */
+  _groupNoteHtml(ids) {
+    if (!this._engine || !this._engine.groupRowEntities || !ids.length) return "";
+    const states = (this._hass || {}).states || {};
+    const rows = this._engine.groupRowEntities(
+      this._hass, ids, ((this._draft || {}).include || {}).entities);
+    const aside = ids.filter((id) =>
+      Array.isArray(((states[id] || {}).attributes || {}).entity_id) &&
+      rows.indexOf(id) === -1);
+    if (!rows.length && !aside.length) return "";
+    const say = [];
+    if (rows.length) {
+      say.push(`${rows.length} ${rows.length === 1 ? "is a group" : "are groups"}` +
+        ", drawn as one row each with the members that are in this state inside it");
+    }
+    if (aside.length) {
+      say.push(`${aside.length} ${aside.length === 1 ? "is a group" : "are groups"}` +
+        " whose contents this event covers as well, so what is inside them is" +
+        " drawn instead");
+    }
+    return `<div class="dim">${esc(say.join("; "))}.</div>`;
   }
 
   /* The same view, asked of the conditions: of the entities this event covers,

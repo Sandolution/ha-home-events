@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14d";
+const CARD_BUILD = "2026-08-14e";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2351,6 +2351,17 @@ class HomeEventCard extends HTMLElement {
    * sit in front of this, and an event that says what it covers is a better
    * answer than an event plus a card that quietly disagrees. */
   _excluded(entityId, sourceCfg, stateObj) {
+    if (!this._covers(entityId, sourceCfg, stateObj)) return true;
+    return !this._conditionsMet((sourceCfg || {}).conditions, entityId);
+  }
+
+  /* The filter half of the same question: what this event is about, before any
+   * question of what state it is in.
+   *
+   * Which groups get a row is decided against this rather than against what is
+   * currently on - otherwise a lamp being switched would move a row from
+   * inside a group to beside it and back. */
+  _covers(entityId, sourceCfg, stateObj) {
     const src = sourceCfg || {};
     const need = src._needs || NO_NEEDS;
     const ctx = { area: null, labels: null, devices: null, floors: null };
@@ -2360,9 +2371,7 @@ class HomeEventCard extends HTMLElement {
     if (need.labels) ctx.labels = this._labels(entityId);
     if (need.devices) ctx.devices = this._deviceKeys(entityId);
     if (need.floors) ctx.floors = this._floorKeys(entityId);
-    if (!passesFilter(src._include, src._exclude, entityId, ctx)) return true;
-    if (!this._conditionsMet(src.conditions, entityId)) return true;
-    return false;
+    return passesFilter(src._include, src._exclude, entityId, ctx);
   }
 
   /* One event: walk its candidates, drop what its filters and conditions
@@ -2374,34 +2383,42 @@ class HomeEventCard extends HTMLElement {
     if (cfg.enabled === false) return;
     const hass = this._hass;
     const grouped = [];
-    /* Groups the event named outright, and everything inside them. Both are
-     * needed before the loop: a named group is a row of its own, and a member
-     * of one must not also be a row beside it. */
-    const named = this._namedGroups(cfg);
+
+    /* What the event covers, filters only. Groups are decided against this
+     * rather than against the loop below, because which rows are groups is a
+     * fact about the event and should not change every time a lamp does. */
+    const covered = [];
+    for (const id of this._index()[name] || []) {
+      const st = hass.states[id];
+      if (st && this._covers(id, cfg, st)) covered.push(id);
+    }
+    const groups = new Set(
+      groupRowEntities(hass, covered, (cfg.include || {}).entities)
+    );
+    /* Everything inside a group that is getting a row of its own. Whether
+     * those are covered too does not matter: they are drawn in there. */
     const inside = new Set();
-    for (const id of named) {
+    for (const id of groups) {
       for (const mid of (hass.states[id].attributes || {}).entity_id || []) {
         inside.add(mid);
       }
     }
 
-    for (const id of this._index()[name] || []) {
+    for (const id of covered) {
       const st = hass.states[id];
-      if (!st) continue;
-      if (this._excluded(id, cfg, st)) continue;
       /* unavailable and unknown are not states anyone means. They are hidden
        * unless a condition names one outright, because the alternative is the
        * same two lines of boilerplate on every event anybody ever writes. */
       if (st.state === "unavailable" || st.state === "unknown") {
         if (!namesState(cfg.conditions, st.state)) continue;
       }
-      if (named.has(id)) continue;   // drawn below, with what is in it
+      if (!this._conditionsMet(cfg.conditions, id)) continue;
+      if (groups.has(id)) continue;  // drawn below, with what is in it
       if (inside.has(id)) continue;  // drawn inside the group that holds it
-      /* A group helper publishes its members, so drawing it as well as them
-       * puts the same things on the card twice. Which of the two to keep is
-       * the author's call and they make it by naming: swept up by a domain or
-       * an area, the group is dropped and its members stand; named in
-       * `entities`, it is the row and they stand inside it. */
+      /* A group whose members this event covers as well: drawing both puts the
+       * same lamps on the card twice, and the members are the more useful
+       * half. groupRowEntities has already kept the ones where that is not
+       * the case. */
       if (!drawable(st)) continue;
       if (groupMode(cfg)) {
         grouped.push(id);
@@ -2411,56 +2428,34 @@ class HomeEventCard extends HTMLElement {
       if (row) out.push(ev(row));
     }
 
-    if (named.size) this._entityGroups(out, name, cfg, named);
+    if (groups.size) this._entityGroups(out, name, cfg, groups);
     if (grouped.length) this._grouped(out, name, cfg, grouped);
   }
 
-  /* The groups this event asked for by name.
-   *
-   * `include: {entities: [light.kitchen_group]}` is somebody choosing the
-   * group over the lamps in it - there is no other reason to write the id of a
-   * thing whose members the card would otherwise draw. A group swept up by
-   * `domains: [light]` is not the same choice and is left alone, which matters
-   * in a house whose groups nest: naming every group a filter touched would
-   * draw one row for the whole building.
-   *
-   * Excludes still apply: a group named in one line and excluded in the next
-   * was excluded. */
-  _namedGroups(cfg) {
-    const out = new Set();
-    const listed = ((cfg.include || {}).entities) || [];
-    if (!listed.length) return out;
-    const hass = this._hass;
-    for (const id of listed) {
-      const st = hass.states[id];
-      if (!st || drawable(st)) continue;
-      if (this._excluded(id, cfg, st)) continue;
-      if (st.state === "unavailable" || st.state === "unknown") {
-        if (!namesState(cfg.conditions, st.state)) continue;
-      }
-      out.add(id);
-    }
-    return out;
-  }
-
-  /* A group that was named: its own row, with the members that are in the
-   * state the event is about underneath it.
+  /* A group with a row of its own, and the members that are in the state the
+   * event is about underneath it.
    *
    * Unlike an area group this row is a real entity, so it is drawn like any
    * other row - its name, its icon, its state, its clock - rather than being
-   * invented from the event's name. That is the point of naming it: the row
-   * carries the group's own switch, and one click through it turns off
-   * everything in the list below.
+   * invented from the event's name. That is the point of it: the row carries
+   * the group's own switch, and one click through it turns off everything in
+   * the list below.
    *
    * It stays a group at one member. An area group of one collapses, because
    * nobody asked for that grouping and a chevron hiding a single lamp is
-   * furniture; here somebody did ask, by writing the id down.
+   * furniture; a group is the thing that was selected.
    */
   _entityGroups(out, name, cfg, ids) {
     const hass = this._hass;
     const asEach = wording(cfg, "each");
     for (const id of ids) {
       const st = hass.states[id];
+      /* The group answers the event's conditions like anything else: a group
+       * that is off is not a row, whatever is inside it. */
+      if (st.state === "unavailable" || st.state === "unknown") {
+        if (!namesState(cfg.conditions, st.state)) continue;
+      }
+      if (!this._conditionsMet(cfg.conditions, id)) continue;
       const kept = [];
       for (const mid of (st.attributes || {}).entity_id || []) {
         const mst = hass.states[mid];
@@ -3805,6 +3800,43 @@ export function matchEntities(hass, spec) {
   const out = [];
   for (const id of Object.keys(hass.states || {})) {
     if (!probe._excluded(id, cfg, hass.states[id])) out.push(id);
+  }
+  return out;
+}
+
+/* Of the entities a filter selected, the ones drawn as a group with what is
+ * inside them underneath.
+ *
+ * A group helper publishes its members, so an event that covers both would put
+ * the same lamps on the card twice. The rule is not "drop every group" - it is
+ * **draw the group unless this event is already drawing what is in it**:
+ *
+ *   domains: [light]                every lamp is covered too, so every group
+ *                                   steps aside and the lamps stand
+ *   domains: [light] +
+ *   entity_globs: ["*_group"]       nothing inside them is covered, so each is
+ *                                   a row with its members inside
+ *   entities: [light.kitchen_group] named outright, which is the same choice
+ *                                   said a different way - and it holds even
+ *                                   where a member was named beside it
+ *
+ * Nesting falls out of it rather than needing a rule of its own: where groups
+ * contain groups, the outer ones are covering their own contents and step
+ * aside, and the innermost - the ones whose members are actual lamps - are the
+ * rows. A house with floor groups over room groups draws its rooms.
+ *
+ * Exported because the Event Manager has to agree: it samples an entity to
+ * preview and would otherwise pick a group the card never draws.
+ */
+export function groupRowEntities(hass, ids, listed) {
+  const states = (hass && hass.states) || {};
+  const covered = new Set(ids || []);
+  const named = new Set(listed || []);
+  const out = [];
+  for (const id of ids || []) {
+    const members = ((states[id] || {}).attributes || {}).entity_id;
+    if (!Array.isArray(members)) continue;
+    if (named.has(id) || !members.some((m) => covered.has(m))) out.push(id);
   }
   return out;
 }
