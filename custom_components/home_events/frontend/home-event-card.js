@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14b";
+const CARD_BUILD = "2026-08-14c";
 
 /* ------------------------------------------------------------------ config */
 
@@ -505,6 +505,7 @@ const DEFAULT_TEXT = {
     running: "Running",
     open: "Open",
     open_pct: "{n}% open", // a cover stopped part-way
+    brightness: "{n}%",    // a lamp that can be dimmed
   },
   /* Words that carry the direction of a duration. Without them a bare
    * "1h 12m" does not say which way it points, and the washer and the
@@ -2621,7 +2622,23 @@ class HomeEventCard extends HTMLElement {
     const a = st.attributes || {};
     if (!drawable(st)) return false;
     e.icon = a.icon || "mdi:lightbulb";
-    e.status = "";
+    /* What a lamp that is on is doing is how bright it is.
+     *
+     * This was blank, on the reasoning that "On" is the one thing a row in an
+     * event about lights that are on does not need to say. True of the word,
+     * and it threw away the number with it - so lights were the only domain on
+     * the card with nothing on the right, which reads as something missing
+     * rather than as something withheld. A dimmable lamp says its brightness;
+     * one that only switches says the domain's own word.
+     *
+     * Rounded up rather than to nearest at the bottom of the scale: a lamp at
+     * brightness 1 is on, and "0%" says it is not. */
+    const pct = typeof a.brightness === "number"
+      ? Math.max(1, Math.round((a.brightness / 255) * 100))
+      : null;
+    e.status = pct === null
+      ? stateLabel(this._hass, st)
+      : fill(this._config.text.status.brightness, pct);
   }
 
   _renderAlarm(e, cfg, id, st) {

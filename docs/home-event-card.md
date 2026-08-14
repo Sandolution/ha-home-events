@@ -180,6 +180,7 @@ What a row says on the right, for the states the card words itself:
 | `status.running` | `Running` |
 | `status.open` | `Open` |
 | `status.open_pct` | `{n}% open` |
+| `status.brightness` | `{n}%` |
 
 Times, in the two directions a row can run:
 
@@ -302,11 +303,13 @@ conditions:
 ### How a row reads
 
 `title`, `detail`, `status` and `icon` are templates. Left empty, the domain
-decides — a light says its name, a climate entity says what it is doing.
+decides — a light says its name on the left and how bright it is on the right,
+a climate entity says what it is doing and where it is heading. `{name}` is the
+friendly name; `{area}` is the room from the registry.
 
 | Placeholder | Reads |
 |---|---|
-| `{name}` | The entity, without the room. |
+| `{name}` | The friendly name, exactly as Home Assistant has it. |
 | `{area}` | The room it is in. |
 | `{state}` | What it is doing, in words. |
 | `{state.raw}` | The same, spelled the way a condition spells it. |
