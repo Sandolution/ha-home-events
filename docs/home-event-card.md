@@ -258,7 +258,7 @@ appended, so that list arranges sections rather than registering them.
 | `category` | Which section the rows go in. Omit it for the generic section. |
 | `group` | `false`, `"area"` (one row per room) or `"all"` (one row for the lot). `true` is the old spelling of `area`. |
 | `severity` | `alert`, `attention`, `active` or `info` — the colour of the dot, and where it sorts. |
-| `time_mode` | `since`, `until`, `ago` or `remaining`. On a grouped row it also decides *which* of the group's instants is shown — see below. |
+| `time_mode` | `since`, `until`, `ago` or `remaining` — one word, or one per kind of row when the event groups. On a grouped row it also decides *which* of the group's instants is shown — see below. |
 | `show_time` | Whether the row carries a time at all. |
 | `title` `detail` `status` `icon` | How the row reads. See below. |
 | `enabled` | `false` keeps the event in the library and draws it on no card. |
@@ -367,42 +367,47 @@ A domain with its own renderer keeps its icon — (2) beats (4) — because thos
 seven were written to say something core does not. Everything else, which is
 most of a house, now matches the rest of the frontend.
 
-### One wording or two
+### Three kinds of row, three wordings
 
-An event that groups may word `title`, `detail`, `status` and `icon` twice —
-once for a row standing for one thing, once for a row that is counting:
+Grouping draws three different rows, and they are read in three different
+places. So `title`, `detail`, `status`, `icon` and `time_mode` may each be
+worded once per kind:
+
+| key | the row it words |
+|---|---|
+| `one` | a row standing for **one entity, on its own** — an event that is not grouping, or a group that turned out to hold a single thing |
+| `each` | a row **inside a group that has been opened**, read underneath the group's own row |
+| `many` | **the group's own row**, which counts rather than names |
 
 ```yaml
-title:  {one: Light, many: Lights}
-detail: {one: "{area}", many: "{n} rooms"}
-icon:   {one: "mdi:lightbulb", many: "mdi:lightbulb-multiple"}
+title:     {one: Ventilation, each: "{area}", many: Ventilation}
+detail:    {one: "{area}",    each: "",       many: Multiple rooms}
+icon:      {one: "mdi:fan",   many: "mdi:fan-speed-3"}
+time_mode: {one: remaining,   many: remaining}
 ```
 
-Only on an event that groups. Without grouping there is nothing to count, so
-the schema refuses the mapping rather than quietly picking one of the two.
+That reads *Ventilation · Bath Room* when one fan is running, and *Ventilation
+· Multiple rooms* with *Bath Room*, *Kitchen*, *Toilet* underneath when three
+are.
 
-`one` is the wording for a row that **stands for a single entity**, and there
-are two such rows:
+**`each` falls back to `one` when it is not written.** For two years there were
+two wordings and a member row took `one`, so every library written before this
+keeps reading exactly as it did.
 
-- a group that turned out to hold exactly one thing
-- **every member inside a group that is open**
+Only on an event that groups. Without grouping every row it draws is a single
+thing, so the schema refuses the mapping rather than quietly picking one third
+of it.
 
-They are the same row drawn in two places, so they read the same way. That is
-what makes the members controllable: `title: {one: "{area}", many:
-"Ventilation"}` gives a group row that says *Ventilation* over members that
-say *Bath Room*, *Kitchen*, *Toilet*.
-
-Left unset, `one` falls back to whatever the domain decided — usually the
+Left unset, a wording falls back to whatever the domain decided — usually the
 entity's own name. Which is worth knowing when entities are named after the
-thing that groups them: `Bath Room | Ventilation | Timer` becomes "Ventilation"
-once the room and the machine word come off, so an unset `one` gives three
-members all reading *Ventilation* under a group reading *Ventilation*. Nothing
-is leaking; they are called that. Set `one` to say something else.
+thing that groups them: with `Bath Room | Ventilation | Timer` unstripped, an
+unset `one` gives members reading their whole name under a group reading
+*Ventilation*. Nothing is leaking; they are called that.
 
-**The one place to be careful** is `status`, whose two wordings are usually a
-count: `status: {one: "1 light on", many: "{n} lights on"}` puts *1 light on*
-against each of three lamps in an open group. A `one` that would read badly on
-a member is a `one` not to write.
+**The one place to be careful** is `status`, whose wordings are often a count:
+`status: {one: "1 light on", many: "{n} lights on"}` used to put *1 light on*
+against each of three lamps in an open group. That is what `each` is for — give
+it its own wording, or an empty one to let the domain speak.
 
 ### An empty wording is not a wording
 
@@ -446,9 +451,11 @@ one follows the direction the row is reading in:
 | `since`, `ago` — counting up | the **earliest** — when the first member started, so the number is how long the group has been this way |
 | `until`, `remaining` — counting down | the **latest** — when the last member finishes, so the number is how long the group will go on |
 
-The direction is `time_mode` if the event names one, and otherwise whatever the
-members agree on — a group of timers counts down without being told to, because
-timers do. Members that disagree leave the group counting up from the first.
+The direction is `time_mode` if the event names one — and `time_mode` takes a
+wording per kind of row like the rest, so the group can read `remaining` while
+the rows inside it read `since`. Otherwise it is whatever the members agree on:
+a group of timers counts down without being told to, because timers do. Members
+that disagree leave the group counting up from the first.
 
 The instant comes from the member rows, not from `last_changed`: a timer's is
 its `finishes_at`, and reading that as an elapsed time is wrong by the whole

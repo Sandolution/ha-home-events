@@ -61,10 +61,13 @@
  * core's vocabulary rather than this card's, and `min_minutes` in particular is
  * just `for:`.
  *
- * `severity` and `time_mode` take one word, not a mapping from state. A dryer
- * that is amber when finished and red with its door open is two events with
- * different conditions, because that is what it is: two different things
- * happening to the same appliance. The mapping hid the line between them.
+ * `severity` and `time_mode` take one of a fixed set of words rather than a
+ * mapping from state. A dryer that is amber when finished and red with its
+ * door open is two events with different conditions, because that is what it
+ * is: two different things happening to the same appliance. The mapping hid
+ * the line between them. `time_mode` does take one word per kind of row, like
+ * the wordings do - a group of timers counting down to its last end can want
+ * saying differently from the timers inside it.
  *
  * ---------------------------------------------------------------------------
  * What the card still knows, and what it does not
@@ -229,7 +232,8 @@
  *                   any, every entity the include matches shows, in any state
  *     severity      alert | attention | active | info. One word. Two meanings
  *                   is two events
- *     time_mode     since | until | ago | remaining. One word, same reason
+ *     time_mode     since | until | ago | remaining. One word, or one per kind
+ *                   of row when the event groups
  *     show_time     false drops the time column
  *     title         template; defaults to what the domain decided
  *     detail        template for the bottom-left slot, usually the location
@@ -309,10 +313,16 @@
  * needs an `if` is a template sensor, which can be tested in the template
  * editor and reused somewhere else.
  *
- * A grouped event counts, so it may need two wordings. `title`, `detail`,
- * `status` and `icon` take a `one`/`many` mapping, and only when the event
- * groups - ungrouped there is nothing to count and a mapping is a mistake
- * worth naming:
+ * Grouping makes three kinds of row, and they are read in three places, so
+ * `title`, `detail`, `status`, `icon` and `time_mode` take a mapping - and
+ * only when the event groups, since ungrouped every row it draws is a single
+ * thing:
+ *
+ *     one    a row standing for a single entity, on its own: an event that is
+ *            not grouping, or a group that turned out to hold one thing
+ *     each   a row inside a group that has been opened, read underneath the
+ *            group's own row. Falls back to `one` when it is not written
+ *     many   the group's own row, which counts rather than names
  *
  *     lights:
  *       group: area
@@ -327,11 +337,11 @@
  * itself is not a second fact. Give the group a `title` of its own and the
  * room moves down to the detail line rather than disappearing.
  *
- * `one` is the wording for a row standing for a single entity, and there are
- * two of those: a group that turned out to hold one thing, and every member
- * inside an open group. So `title: {one: "{area}", many: Ventilation}` reads
- * Ventilation over Bath Room, Kitchen, Toilet. An empty half is not a wording
- * - a text box nobody filled in means nothing was written, not write nothing -
+ * The three are what lets a name suit where it is read. `title: {one:
+ * Ventilation, each: "{area}", many: Ventilation}` puts Ventilation on a lone
+ * row and on the group, and Bath Room, Kitchen, Toilet inside it - where the
+ * row above has already said what they are. An empty half is not a wording -
+ * a text box nobody filled in means nothing was written, not write nothing -
  * and a detail line equal to the title above it is dropped.
  *
  * ---------------------------------------------------------------------------
@@ -376,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-13j";
+const CARD_BUILD = "2026-08-14a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -412,7 +422,10 @@ const EVENT_KEYS = [
  * only here: everything else that used to take one - severity, time_mode -
  * means writing a second event with its own conditions, which is what those
  * mappings were always describing. */
-const PLURAL_KEYS = ["title", "detail", "status", "icon"];
+/* The options that take a wording per kind of row, rather than one value for
+ * every row the event draws. See `wording()`. */
+const PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"];
+const WORDING_KEYS = ["one", "each", "many"];
 
 /* How a grouping event collapses its rows.
  *
@@ -1218,9 +1231,23 @@ function matchesDimension(filter, key, entityId, ctx) {
   }
 }
 
-/* A grouped event's wording, resolved for this many rows. `{one, many}` is
- * the only mapping left in the schema and this is where it collapses, so the
- * render path downstream never has to know it existed.
+/* A grouped event's wording, resolved for the kind of row being drawn. This
+ * is where the mapping collapses, so the render path downstream never has to
+ * know it existed.
+ *
+ * Grouping makes three kinds of row and they are read in three different
+ * places, so there are three wordings:
+ *
+ *   one    a row standing for a single entity, on its own - either an event
+ *          that is not grouping, or a group that turned out to hold one thing
+ *   each   a row inside a group that has been opened. Read underneath the
+ *          group's own row, so it is answering "which ones", where the group
+ *          has already said what they are
+ *   many   the group's own row, which is a count of things rather than a thing
+ *
+ * `each` falls back to `one` when it is not written: for two years there were
+ * two wordings and a member row took `one`, and a config that says nothing new
+ * should keep reading the way it read.
  *
  * An empty half is not a wording. A text box that was never filled in saves
  * as "", and taking that literally is an instruction to draw an empty line -
@@ -1228,12 +1255,15 @@ function matchesDimension(filter, key, entityId, ctx) {
  * having left `detail.one` blank meaning "I did not write one". Absent and
  * empty say the same thing here, and the key is dropped so whatever the
  * domain decided stands. */
-function plural(cfg, n) {
+function wording(cfg, role) {
   let out = cfg;
   for (const k of PLURAL_KEYS) {
     if (!isPlainObject(cfg[k])) continue;
     if (out === cfg) out = { ...cfg };
-    const half = n === 1 ? cfg[k].one : cfg[k].many;
+    const m = cfg[k];
+    const half = role === "many" ? m.many
+      : role === "each" ? (m.each || m.one)
+        : m.one;
     if (half) out[k] = half;
     else delete out[k];
   }
@@ -1666,17 +1696,30 @@ class HomeEventCard extends HTMLElement {
       events[name] = e;
       checkKeys(EVENT_KEYS, e, `events.${name}`);
 
-      /* One word, not a mapping. A device that reads two ways in two states is
-       * two events with different conditions - which is what a state mapping
-       * was always describing, only without saying where the line was. */
+      /* One of a fixed set of words - per kind of row for `time_mode`, which
+       * groups like the wordings do, and once and for all for `severity`,
+       * which does not: a group is as urgent as what is in it, and a row that
+       * changed colour on being opened would be saying something about the
+       * chevron rather than about the house.
+       *
+       * Not a mapping from state, either. A device that reads two ways in two
+       * states is two events with different conditions - which is what a state
+       * mapping was always describing, only without saying where the line
+       * was. */
       for (const [key, allowed] of [["severity", SEVERITIES], ["time_mode", TIME_MODES]]) {
         if (e[key] == null) continue;
-        if (typeof e[key] !== "string" || allowed.indexOf(e[key]) === -1) {
-          throw new Error(
-            `home-event-card: \`${key}\` on events.${name} must be one of ` +
-              `${allowed.join(", ")}. For two values, write two events with ` +
-              "`conditions` that tell them apart."
-          );
+        const halves = isPlainObject(e[key]) && PLURAL_KEYS.indexOf(key) !== -1
+          ? Object.values(e[key])
+          : [e[key]];
+        for (const value of halves) {
+          if (value === "") continue; // nothing written, not a wrong word
+          if (typeof value !== "string" || allowed.indexOf(value) === -1) {
+            throw new Error(
+              `home-event-card: \`${key}\` on events.${name} must be one of ` +
+                `${allowed.join(", ")}. For two values, write two events with ` +
+                "`conditions` that tell them apart."
+            );
+          }
         }
       }
       if (e.group !== undefined && GROUP_MODES.indexOf(e.group) === -1) {
@@ -1694,18 +1737,19 @@ class HomeEventCard extends HTMLElement {
           );
         }
       }
-      /* A grouped row counts, so it needs two wordings. Ungrouped, there is
-       * nothing to count and a mapping is a mistake worth naming. */
+      /* Grouping makes three kinds of row, so it takes three wordings.
+       * Ungrouped there is only ever the one, and a mapping is a mistake worth
+       * naming rather than two thirds of an answer nobody will see. */
       for (const key of PLURAL_KEYS) {
         if (!isPlainObject(e[key])) continue;
         if (!groupMode(e)) {
           throw new Error(
             `home-event-card: \`${key}\` on events.${name} may only be a ` +
-              "`one`/`many` mapping when the event groups - without grouping " +
-              "there is nothing to count."
+              "`one`/`each`/`many` mapping when the event groups - without " +
+              "grouping every row it draws is a single thing."
           );
         }
-        checkKeys(["one", "many"], e[key], `${key} on events.${name}`);
+        checkKeys(WORDING_KEYS, e[key], `${key} on events.${name}`);
       }
       checkConditions(e.conditions, `events.${name}`);
     }
@@ -2420,21 +2464,22 @@ class HomeEventCard extends HTMLElement {
     const hass = this._hass;
     const text = this._config.text;
     const mode = groupMode(cfg);
-    /* One question, and it had two answers for a while.
+    /* One question, and it has had three answers.
      *
-     * `one` is the wording for a row that stands for a single entity, and
-     * there are two such rows: a group that turned out to hold one thing, and
-     * every member inside a group that is open. They are the same row drawn in
-     * two places, so they are worded the same way.
+     * First the mapping was dropped on a member row, on the reasoning that
+     * `{one, many}` is about a count. That took the author's control away:
+     * an event whose members should read "{area}" had no slot to say it in.
      *
-     * Members used to have the mapping dropped instead, on the reasoning that
-     * `{one, many}` belongs to a count. That reasoning holds for `status` -
-     * "1 light on" against each of three lamps says nothing - and it takes the
-     * author's control away everywhere else: an event whose members should
-     * read "{area}" had no way to say so, because the only slot for it was
-     * being discarded. Uniform beats clever here; a `one` that would read
-     * badly on a member is a `one` not to write. */
-    const asOne = plural(cfg, 1);
+     * Then a member took `one`, on the reasoning that a member and a group of
+     * one are the same row drawn twice. They are not, and this is where that
+     * showed: a member is read underneath the group's own row, which has
+     * already said what these things are, while a solo row is read on its own
+     * among strangers. Wording both from one slot means a name that suits the
+     * group's inside is the name a lone row wears out on the card.
+     *
+     * So there are three, and `each` falls back to `one` where it is not
+     * written - which is every config from before there was a third. */
+    const asEach = wording(cfg, "each");
     const buckets = new Map();
 
     for (const id of ids) {
@@ -2457,18 +2502,23 @@ class HomeEventCard extends HTMLElement {
     for (const b of buckets.values()) {
       const kept = [];
       for (const id of b.ids) {
-        const row = this._decorate(name, asOne, id, hass.states[id]);
+        const row = this._decorate(name, asEach, id, hass.states[id]);
         if (row) kept.push(row);
       }
       if (!kept.length) continue;
 
       /* A group of one is a device with a room written on it twice. One lamp
        * on in the study is "Ceiling, Study Room", not "Study Room" with a
-       * chevron hiding the word Ceiling - and the row this pushes is exactly
-       * the row opening the group would have shown, so nothing is lost by the
-       * group never appearing. */
+       * chevron hiding the word Ceiling.
+       *
+       * It is drawn again rather than kept, because it is no longer the row it
+       * was built as. Nothing is grouping it, nothing is above it saying what
+       * it is, and it will be read among rows from every other event on the
+       * card - which is the row `one` is the wording for. */
       if (kept.length === 1) {
-        out.push(ev(kept[0]));
+        const id = kept[0].key;
+        const solo = this._decorate(name, wording(cfg, "one"), id, hass.states[id]);
+        out.push(ev(solo || kept[0]));
         continue;
       }
 
@@ -2530,7 +2580,7 @@ class HomeEventCard extends HTMLElement {
           m.sub && m.sub === b.area ? { ...m, sub: "" } : m
         ),
       };
-      const row = this._applyConfig(e, plural(cfg, n), b.ids[0], vars);
+      const row = this._applyConfig(e, wording(cfg, "many"), b.ids[0], vars);
       /* A room group says the room on its title line. A `title:` template
        * takes that line - "Lights", say - and the room then has nowhere left
        * to be said, which is how a card ended up with two rows called Lights

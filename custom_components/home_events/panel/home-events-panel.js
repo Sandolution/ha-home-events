@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-13d";
+const PANEL_BUILD = "2026-08-14a";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -82,8 +82,18 @@ const DEFAULT_TIME_MODE = "since";
  * evaluates them the way core does: and passes when every one inside passes,
  * or when any does, not when none does. */
 const GROUP_KINDS = ["and", "or", "not"];
-/* The card's PLURAL_KEYS: the slots a counting row may word two ways. */
-const PLURAL_KEYS = ["title", "detail", "status", "icon"];
+/* The card's PLURAL_KEYS: the slots that may be worded once per kind of row.
+ * Grouping makes three - a single thing on its own, a member of an open group,
+ * and the group itself - and they are read in three different places. */
+const PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"];
+/* The card's WORDING_KEYS, with what each is called on the form. `each` falls
+ * back to `one` when it is left empty, which is what every config written
+ * before there was a third wording relies on. */
+const WORDINGS = [
+  ["one", "on its own", "A row for a single thing, with nothing above it saying what it is"],
+  ["each", "inside a group", "Read under the group's row, which has already named them. Empty means: the same as on its own"],
+  ["many", "the group row", "The row that stands for the lot and counts them"],
+];
 
 /* Not a section: the option in the list that asks for one. It is a word no
  * category id can be, because a category id is what this form makes of what
@@ -232,18 +242,22 @@ const HELP = {
     "Alerts come first, and a card can promote them into their own section.",
   group: "Draw one row per room, or one row for the lot, instead of a row for " +
     "every entity. A group that turns out to hold one thing is drawn as that " +
-    "thing.",
+    "thing.\n\n" +
+    "Grouping makes three kinds of row, read in three places, so Title, " +
+    "Detail, Status, Icon and Time can each be worded three ways: a thing on " +
+    "its own, a thing inside an opened group, and the group's own row. Leave " +
+    "the middle one empty and it reads the same as on its own.",
   title: "The first line of the row. Left empty, the domain decides - a light " +
     "says its name, an alarm says the panel. {name}, {state} and {attr.x} are " +
     "filled in from the entity.\n\n" +
     "A | inside the braces runs a replace on what was read, written as " +
-    "s/pattern/replacement/flags. So to drop the machine words integrations " +
-    "put on the end of a name:\n\n" +
-    "    {name|s/ · (State|Error|Status)$//}\n\n" +
-    "{name} joins the parts of a piped friendly name with · , which is why " +
-    "the pattern looks for one. Add words to the list to strip more; after " +
-    "the last slash, i ignores case and g replaces every match instead of " +
-    "only the first.",
+    "s/pattern/replacement/flags. So to drop the room off the front of a " +
+    "name and the machine word off the end:\n\n" +
+    "    {name|s/^[^|]+[|] | [|] (State|Error|Status)$//g}\n\n" +
+    "{name} is the friendly name exactly as Home Assistant has it, pipes and " +
+    "all, which is why the pattern looks for them - a literal pipe is written " +
+    "[|]. Add words to the list to strip more; after the last slash, i " +
+    "ignores case and g replaces every match instead of only the first.",
   detail: "The quieter line beside the title. Usually the room, which is what " +
     "it says if this is left empty. Same placeholders and the same " +
     "s/pattern/replacement/ filter as Title.\n\n" +
@@ -259,7 +273,10 @@ const HELP = {
     "drawn for it, from its device class or its integration.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
     "count up from the last change, until and remaining count down to what is " +
-    "next.",
+    "next.\n\n" +
+    "A grouped row reads its own clock: counting up it runs from the first of " +
+    "them, counting down it runs to the last - so it can want a different " +
+    "word from the rows inside it. Off is off for the whole event.",
   include: "Which entities this event covers. Every criterion is a way of " +
     "naming some - a domain, a room, a floor, a label, a device, an entity, " +
     "or a pattern.",
@@ -615,7 +632,12 @@ class HomeEventsPanel extends HTMLElement {
         </header>
         <main>
           <aside class="side">
-            <button class="primary wide" data-act="new" title="${esc(HELP.newevent)}">New event</button>
+            <div class="sidetop">
+              <button class="icon square" data-act="home"
+                      title="The overview">&#8962;</button>
+              <button class="primary grow" data-act="new"
+                      title="${esc(HELP.newevent)}">New event</button>
+            </div>
             <div class="list"></div>
           </aside>
           <section class="editor">
@@ -1198,6 +1220,12 @@ class HomeEventsPanel extends HTMLElement {
       events: { [name]: draft },
     };
     card.hass = this._hass;
+    /* Opened, when there is something to open. Two of the three wordings live
+     * inside a group - the row that counts, and the rows it counts - and one
+     * of them cannot be checked against a chevron. The card is asked the way
+     * a person would ask, with a click, so what appears is what a click
+     * produces rather than what this file thinks a click produces. */
+    if (this._previewMany) this._openPreviewGroup(card);
     host.querySelectorAll(".prevnote").forEach((n) => n.remove());
     /* Only when something is wrong. A line under every preview saying which
      * entity it sampled was a sentence to read past on the way to the row it
@@ -1212,6 +1240,18 @@ class HomeEventsPanel extends HTMLElement {
       host.insertAdjacentHTML("beforeend",
         `<div class="hint prevnote">${esc(say)}</div>`);
     }
+  }
+
+  /* Click the group open, if it is drawn shut. The card keeps which rows are
+   * open across a repaint, so this is a one-off per preview rather than
+   * something to redo on every keystroke. */
+  _openPreviewGroup(card) {
+    const root = card.shadowRoot;
+    if (!root) return;
+    const row = root.querySelector(".ev[data-group]");
+    if (!row) return;                        // nothing grouped here
+    if (row.getAttribute("aria-expanded") === "true") return;
+    row.dispatchEvent(new CustomEvent("click", { bubbles: true, composed: true }));
   }
 
   /* Which entities the sample is drawn from.
@@ -1362,22 +1402,15 @@ class HomeEventsPanel extends HTMLElement {
 
          ${TEXT_SLOTS.map((slot) => this._slotHtml(slot, d, grouped)).join("")}
 
-         <div class="field"><div class="label"${tip("time")}>Time</div><div class="inline">
-           <label class="check"><input type="checkbox" data-set="show_time"
-             ${d.show_time === false ? "" : "checked"}> Show</label>
-           <select data-set="time_mode"${d.show_time === false ? " disabled" : ""}>
-             ${TIME_MODES.map((m) => `<option value="${m}"` +
-               `${(d.time_mode || DEFAULT_TIME_MODE) === m ? " selected" : ""}>` +
-               `${humanise(m)}</option>`).join("")}
-           </select>
-         </div></div>
+         ${this._timeHtml(d, grouped)}
 
          <div class="field chiprow"><div class="label"${tip("preview")}>Reads as</div><div>
            <div class="seg small previewseg">
              <button data-act="prevone"${this._previewMany ? "" : ' class="on"'}
-                     title="How the row reads for a single thing">One</button>
+                     title="How the row reads for a single thing, on its own">One</button>
              <button data-act="prevmany"${this._previewMany ? ' class="on"' : ""}
-                     title="How it reads when it stands for several">Many</button>
+                     title="The group's own row, drawn open, so the rows inside
+it are underneath it">Grouped</button>
            </div>
            <div class="previewbox"><div data-preview></div></div>
          </div></div>
@@ -1430,6 +1463,42 @@ class HomeEventsPanel extends HTMLElement {
       </details>`;
   }
 
+  /* Time, which is a slot like the wordings are: a group of timers counting
+   * down to whichever ends last can want saying differently from the timers
+   * inside it - "14m remaining" over "Running since 12:40". Off is off for
+   * the whole event, so the checkbox stays single. */
+  _timeHtml(d, grouped) {
+    const value = d.time_mode;
+    const pair = value && typeof value === "object";
+    const shown = d.show_time !== false;
+    const pick = (path, current) =>
+      `<select data-set="${path}"${shown ? "" : " disabled"}>` +
+      /* An empty option only where there is something for empty to mean: in a
+         mapping, a half nobody filled in is "the same as the others". */
+      (path === "time_mode" ? "" :
+        `<option value=""${current ? "" : " selected"}>—</option>`) +
+      TIME_MODES.map((m) => `<option value="${m}"` +
+        `${(current || (path === "time_mode" ? DEFAULT_TIME_MODE : "")) === m
+          ? " selected" : ""}>${humanise(m)}</option>`).join("") +
+      `</select>`;
+    const body = pair
+      ? `<div class="pair">${WORDINGS.map(([k, label, why]) =>
+          `<label title="${esc(why)}"><span>${esc(label)}</span>` +
+          `${pick(`time_mode.${k}`, value[k])}</label>`).join("")}</div>`
+      : pick("time_mode", value);
+    const toggle = grouped
+      ? `<button class="link" data-act="plural" data-value="time_mode">` +
+        (pair ? "Use one wording everywhere" : "Word it differently for a group") +
+        `</button>`
+      : "";
+    return `<div class="field"><div class="label"${tip("time")}>Time</div>
+      <div class="${pair ? "" : "inline"}">
+        <label class="check"><input type="checkbox" data-set="show_time"
+          ${shown ? "checked" : ""}> Show</label>
+        ${body}${toggle}
+      </div></div>`;
+  }
+
   _groupOf(d) {
     if (d.group === true || d.group === "area") return "area";
     if (d.group === "all") return "all";
@@ -1447,10 +1516,10 @@ class HomeEventsPanel extends HTMLElement {
      * find one, so where Home Assistant's picker is available it is used - and
      * opened out of sight, exactly as a criterion's is. */
     const icons = slot.key === "icon" && this._hasEl("ha-icon-picker");
-    const field = (path, current) => {
+    const field = (path, current, hint) => {
       if (!icons) {
         return `<input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
-                  placeholder="${esc(slot.hint)}" spellcheck="false">`;
+                  placeholder="${esc(hint || slot.hint)}" spellcheck="false">`;
       }
       const being = this._editing;
       const open = being && being.type === "icon" && being.path === path;
@@ -1464,21 +1533,24 @@ class HomeEventsPanel extends HTMLElement {
           ${open ? `<span class="pickhost" data-iconslot="${path}"></span>` : ""}
         </div>`;
     };
-    /* A grouped row stands for however many entities it collected, so these
-       slots may be worded twice: once for a row that turned out to be a
-       single thing, once for a row that is a tally. The button says what
-       pressing it does, and the labels say when each wording is used. */
+    /* Grouping makes three kinds of row and they are read in three places, so
+       these slots may be worded three ways. The button says what pressing it
+       does; the labels say where each wording lands. */
+    /* The middle box says what leaving it empty will do, rather than repeating
+       the hint from the box above it: it falls back to `one`, and the only
+       place that is written down is here. */
     const body = pair
-      ? `<div class="pair">
-           <label><span>if it is one</span>${field(`${slot.key}.one`, value.one)}</label>
-           <label><span>if it is more</span>${field(`${slot.key}.many`, value.many)}</label>
-         </div>`
+      ? `<div class="pair">${WORDINGS.map(([k, label, why]) =>
+           `<label title="${esc(why)}"><span>${esc(label)}</span>` +
+           `${field(`${slot.key}.${k}`, value[k],
+             k === "each" && value.one ? "Same as on its own" : "")}</label>`)
+           .join("")}</div>`
       : field(slot.key, value);
     const toggle = plural && grouped
       ? `<button class="link" data-act="plural" data-value="${slot.key}">` +
         (pair
-          ? "Use one wording, whatever the count"
-          : "Word it differently when it counts more than one") + `</button>`
+          ? "Use one wording everywhere"
+          : "Word it differently for a group") + `</button>`
       : "";
     return `<div class="field"><div class="label"${tip(slot.key)}>` +
       `${esc(slot.label)}</div>` +
@@ -2230,9 +2302,12 @@ class HomeEventsPanel extends HTMLElement {
       case "plural": {
         const key = el.dataset.value;
         const v = this._draft[key];
+        /* Collapsing keeps the first wording that says anything rather than
+         * the first slot: someone who wrote only the group's wording and then
+         * changed their mind should not be handed an empty box. */
         this._draft[key] = v && typeof v === "object"
-          ? (v.one || v.many || "")
-          : { one: typeof v === "string" ? v : "", many: "" };
+          ? (v.one || v.each || v.many || "")
+          : { one: typeof v === "string" ? v : "", each: "", many: "" };
         this._setDirty(true);
         return this._renderPane();
       }
@@ -2654,6 +2729,17 @@ main {
 @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
 
 .side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+/* The way back, beside the way forward. Square and quiet: it is the same
+   destination as the title in the toolbar, and two loud buttons side by side
+   would make a choice out of what is really one button and one exit. */
+.sidetop { display: flex; gap: 8px; align-items: stretch; }
+.sidetop .grow { flex: 1; }
+.icon.square {
+  width: 38px; padding: 0; font-size: 19px; line-height: 1; flex: none;
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  border-radius: 10px; color: var(--secondary-text-color);
+}
+.icon.square:hover { background: rgba(127,127,127,.12); color: var(--primary-text-color); }
 .side .wide { width: 100%; }
 .list, .editor {
   background: var(--card-background-color, #fff);
@@ -2945,7 +3031,10 @@ textarea.yaml {
 .chipbtn.on { color: var(--primary-text-color); border-color: currentColor; }
 
 .pair { display: grid; gap: 6px; }
-.pair label { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 8px; align-items: center; }
+/* Wide enough for "inside a group" on one line: the labels are the only thing
+   saying which row each box is about, and one wrapping onto two lines pushes
+   its own field out of line with the others. */
+.pair label { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 8px; align-items: center; }
 .pair span { font-size: 11px; color: var(--secondary-text-color); }
 .check { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; }
 

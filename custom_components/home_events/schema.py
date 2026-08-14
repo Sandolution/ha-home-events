@@ -31,7 +31,11 @@ FILTER_KEYS = [
 ]
 FILTER_OPTS = ["match"]
 # home-event-card.js: PLURAL_KEYS
-PLURAL_KEYS = ["title", "detail", "status", "icon"]
+PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"]
+# home-event-card.js: WORDING_KEYS. Grouping makes three kinds of row - a
+# single thing on its own, a member of an open group, and the group itself -
+# and they are read in three places, so each may be worded on its own.
+WORDING_KEYS = ["one", "each", "many"]
 # home-event-card.js: SEVERITIES, TIME_MODES, GROUP_MODES
 SEVERITIES = ["alert", "attention", "active", "info"]
 TIME_MODES = ["since", "until", "ago", "remaining"]
@@ -167,9 +171,6 @@ def _validate_event(name: str, event: Any) -> None:
     if event.get("severity") is not None and event["severity"] not in SEVERITIES:
         _fail(f"Severity {event['severity']!r} on {where} is not on the scale. "
               "Use one of: " + ", ".join(SEVERITIES) + ".")
-    if event.get("time_mode") is not None and event["time_mode"] not in TIME_MODES:
-        _fail(f"Time mode {event['time_mode']!r} on {where} is not one of: "
-              + ", ".join(TIME_MODES) + ".")
 
     for key in BOOL_KEYS:
         if event.get(key) is not None and not isinstance(event[key], bool):
@@ -181,20 +182,31 @@ def _validate_event(name: str, event: Any) -> None:
         if value is None or isinstance(value, str):
             continue
         if key in PLURAL_KEYS and _is_map(value):
-            # The one mapping left in the schema, and only for a row that
-            # counts something.
+            # The one mapping left in the schema, and only for an event whose
+            # rows are read in more than one place.
             if not grouped:
-                _fail(f'A "one"/"many" wording is only allowed on an event '
-                      f'that groups, and {where} does not. Without grouping '
-                      f'there is nothing to count, so "{key}" is one piece of '
-                      "text.")
-            unknown = [k for k in value if k not in ("one", "many")]
+                _fail(f'A "one"/"each"/"many" wording is only allowed on an '
+                      f'event that groups, and {where} does not. Without '
+                      f'grouping every row it draws is a single thing, so '
+                      f'"{key}" is one piece of text.')
+            unknown = [k for k in value if k not in WORDING_KEYS]
             if unknown:
-                _fail(f'A wording mapping takes "one" and "many". '
+                _fail('A wording mapping takes "one", "each" and "many". '
                       f'On {where}.{key} there is also: '
                       + ", ".join(unknown) + ".")
             continue
         _fail(f'Option "{key}" on {where} is text, but it is {_kind(value)}.')
+
+    # A word per kind of row, like the wordings, so a group counting down to
+    # its last end can be said differently from the timers inside it. An empty
+    # half is a box nobody filled in, not a wrong word.
+    modes = event.get("time_mode")
+    for value in (modes.values() if _is_map(modes) else [modes]):
+        if value is None or value == "":
+            continue
+        if value not in TIME_MODES:
+            _fail(f"Time mode {value!r} on {where} is not one of: "
+                  + ", ".join(TIME_MODES) + ".")
 
 
 def _ordered(event: dict) -> dict:
