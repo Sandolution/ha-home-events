@@ -160,6 +160,7 @@ a silently accepted typo is a card in two languages.
 | `elsewhere` | `Elsewhere` | a row with no room to name |
 | `degree` | `°` | |
 | `arrow` | `→` | between a thermostat's current and target |
+| `hold` | `Hold for this group's own controls` | on a group row that has an entity behind it |
 | `more` | `+{n} more` | a section's own overflow line |
 | `more_events` | `+{n} more events` | the whole card's overflow line |
 | `more_event` | `+{n} more event` | the same, when there is one |
@@ -477,10 +478,12 @@ What that gets you:
 
 - **The row is the group's own entity** — its name, its icon, its state, its
   clock. Not a label invented from the event's name, the way an area group is.
-- **Clicking it opens the group**, so one switch turns off everything in the
-  list. This is the point of naming it, which is why the row keeps its click
-  and the **chevron** does the opening. (Area groups have nothing behind them,
-  so there the whole row opens.)
+- **Tap opens it; hold reaches the group itself.** A tap anywhere on the row
+  shows what is inside — the whole row, not an 18px chevron, because this card
+  gets read one-handed. Press and hold for half a second and Home Assistant's
+  own dialog for the group opens, which is where the one switch for the lot
+  is. Same pairing as `tap_action` / `hold_action` on core's cards, and the
+  row says so on hover. A press that turns into a scroll is a scroll.
 - **It stays a group at one member.** An area group of one collapses into that
   one thing, because nobody asked for the grouping. Here somebody did.
 - **A member is never also a row beside its group.** Name a group and one of

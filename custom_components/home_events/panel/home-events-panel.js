@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-14d";
+const PANEL_BUILD = "2026-08-14e";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -245,10 +245,10 @@ const HELP = {
     "thing.\n\n" +
     "A Home Assistant group is different and needs nothing set here: name one " +
     "under What > Entities and it becomes the row, with the members that are " +
-    "in the state below it. The row is the group itself, so clicking it opens " +
-    "the group's own controls - one switch for the lot - and the chevron " +
-    "opens the list. A group a filter merely swept up is still dropped in " +
-    "favour of its members.\n\n" +
+    "in the state below it. A tap opens the list and holding the row opens " +
+    "the group's own controls, where one switch turns off the lot. A group " +
+    "whose members this same event also covers is dropped in favour of them - " +
+    "there would be nothing new in the row.\n\n" +
     "Grouping makes three kinds of row, read in three places, so Title, " +
     "Detail, Status, Icon and Time can each be worded three ways: a thing on " +
     "its own, a thing inside an opened group, and the group's own row. Leave " +
@@ -1257,11 +1257,7 @@ class HomeEventsPanel extends HTMLElement {
     const row = root.querySelector(".ev[data-group]");
     if (!row) return;                        // nothing grouped here
     if (row.getAttribute("aria-expanded") === "true") return;
-    /* The chevron where there is one to press: a group row that is also an
-       entity keeps its own click for more-info, so clicking the row would open
-       a dialog over the panel rather than the drawer. */
-    const target = row.dataset.entity ? row.querySelector(".exp") || row : row;
-    target.dispatchEvent(new CustomEvent("click", { bubbles: true, composed: true }));
+    row.dispatchEvent(new CustomEvent("click", { bubbles: true, composed: true }));
   }
 
   /* Which entities the sample is drawn from.

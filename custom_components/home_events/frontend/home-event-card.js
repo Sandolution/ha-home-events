@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14e";
+const CARD_BUILD = "2026-08-14f";
 
 /* ------------------------------------------------------------------ config */
 
@@ -457,6 +457,12 @@ const RENDERERS = {
   vacuum: "_renderVacuum",
   alarm_control_panel: "_renderAlarm",
 };
+
+/* How long a press has to last to be a hold, and how far a finger may travel
+ * while it does. Home Assistant's own tap/hold split is half a second, so a
+ * row here answers to the same press as a row anywhere else. */
+const HOLD_MS = 500;
+const HOLD_SLOP = 10;
 
 const SEVERITIES = ["alert", "attention", "active", "info"];
 const TIME_MODES = ["since", "until", "ago", "remaining"];
@@ -539,6 +545,9 @@ const DEFAULT_TEXT = {
   arrow: "\u2192",
   elsewhere: "Elsewhere", // an event with no area
   empty: "Nothing going on",
+  /* On a group row that has an entity behind it: the one place a second
+     gesture can announce itself, since a hold leaves no mark on a screen. */
+  hold: "Hold for this group's own controls",
   more: "+{n} more", // a section's own overflow line
   more_events: "+{n} more events", // the whole card's overflow line
   more_event: "+{n} more event",
@@ -969,6 +978,15 @@ function localized(hass, key, override, fallback) {
 const CLIMATE_ACTION_KEY =
   "component.climate.entity_component._.state_attributes.hvac_action.state.";
 const CLIMATE_MODE_KEY = "component.climate.entity_component._.state.";
+
+/* The buzz a phone gives when a press turns into a hold. Home Assistant
+ * listens for this on the window and decides whether the device does anything
+ * with it - which is where that decision belongs, since it is a setting and a
+ * platform question rather than this card's business. */
+function haptic(kind) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("haptic", { detail: kind }));
+}
 
 function stateLabel(hass, stateObj, fallback) {
   if (hass && typeof hass.formatEntityState === "function") {
@@ -1607,6 +1625,9 @@ class HomeEventCard extends HTMLElement {
     this._folded = new Set();
     this._onClick = (e) => this._handleClick(e);
     this._onKey = (e) => this._handleKey(e);
+    this._onDown = (e) => this._holdStart(e);
+    this._onUp = () => this._holdStop();
+    this._onMove = (e) => this._holdMoved(e);
     this._onVisibility = () => this._applyVisibility();
   }
 
@@ -2177,6 +2198,12 @@ class HomeEventCard extends HTMLElement {
     this._root = this.shadowRoot.querySelector(".root");
     this._root.addEventListener("click", this._onClick);
     this._root.addEventListener("keydown", this._onKey);
+    /* Tap and hold, on the rows that have two things to do. */
+    this._root.addEventListener("pointerdown", this._onDown);
+    this._root.addEventListener("pointerup", this._onUp);
+    this._root.addEventListener("pointercancel", this._onUp);
+    this._root.addEventListener("pointerleave", this._onUp);
+    this._root.addEventListener("pointermove", this._onMove);
     /* A scroll event does not bubble, but it does pass through the capture
      * phase - so one listener on the root covers every section, including the
      * ones that do not exist yet. The alternative is re-binding on each
@@ -2186,6 +2213,13 @@ class HomeEventCard extends HTMLElement {
   }
 
   _handleClick(e) {
+    /* The click that follows a hold is the same gesture reported twice. The
+     * hold already did something; doing the tap's thing as well would open the
+     * drawer under the dialog that was just asked for. */
+    if (this._held) {
+      this._held = false;
+      return;
+    }
     if (this._toggled(e)) return;
     const el = this._targetOf(e);
     if (el && el.dataset.entity) this._fireMoreInfo(el.dataset.entity);
@@ -2206,16 +2240,6 @@ class HomeEventCard extends HTMLElement {
     }
     const row = path.find((n) => n && n.dataset && n.dataset.group);
     if (row) {
-      /* A row that is also an entity keeps its click.
-       *
-       * An area group has nothing behind it, so the whole row opens it. A
-       * named group helper does: reaching its switch is the reason its id was
-       * written down, and a click that opened a drawer instead would put the
-       * one control the row was added for behind a chevron. So there the
-       * chevron opens and the rest of the row is the entity. */
-      const onChevron = path.some((n) =>
-        n && n.classList && n.classList.contains("exp"));
-      if (row.dataset.entity && !onChevron) return false;
       const key = row.dataset.group;
       if (this._open.has(key)) this._open.delete(key);
       else this._open.add(key);
@@ -2223,6 +2247,48 @@ class HomeEventCard extends HTMLElement {
       return true;
     }
     return false;
+  }
+
+  /* Tap opens the drawer; hold opens the entity behind it.
+   *
+   * A group row has two things worth doing and one of them has to be second.
+   * The chevron was that second thing, and an 18px target beside a scrolling
+   * list is not one on a phone - which is where this card is read one-handed.
+   * So the row does the common thing, looking at what is inside, and a
+   * press-and-hold reaches the group's own controls. That is the same pairing
+   * Home Assistant's own cards use for tap_action and hold_action, so the
+   * gesture is one somebody already has.
+   *
+   * Only rows with both. A row that is only an entity opens on tap as it
+   * always has, and an area group has nothing behind it to hold for.
+   */
+  _holdStart(e) {
+    if (e.button != null && e.button > 0) return;   // right or middle
+    const row = e.composedPath().find((n) => n && n.dataset && n.dataset.group);
+    if (!row || !row.dataset.entity) return;
+    this._holdStop();
+    this._holdAt = { x: e.clientX || 0, y: e.clientY || 0 };
+    this._holdTimer = window.setTimeout(() => {
+      this._holdTimer = null;
+      /* Set before the dialog opens: the click that ends this press is still
+       * to come, and it must not also toggle the row. */
+      this._held = true;
+      haptic("long");
+      this._fireMoreInfo(row.dataset.entity);
+    }, HOLD_MS);
+  }
+
+  _holdStop() {
+    if (this._holdTimer) window.clearTimeout(this._holdTimer);
+    this._holdTimer = null;
+  }
+
+  /* A finger that travelled was scrolling the page, not holding a row. */
+  _holdMoved(e) {
+    if (!this._holdTimer || !this._holdAt) return;
+    const dx = (e.clientX || 0) - this._holdAt.x;
+    const dy = (e.clientY || 0) - this._holdAt.y;
+    if (dx * dx + dy * dy > HOLD_SLOP * HOLD_SLOP) this._holdStop();
   }
 
   /* The signature exists to stop the DOM being rebuilt for nothing. A fold is
@@ -3337,6 +3403,10 @@ class HomeEventCard extends HTMLElement {
       ? ` data-group="${esc(e.key)}" aria-expanded="${open ? "true" : "false"}"`
       : "";
     const tabbable = e.entity || e.members ? ` tabindex="0" role="button"` : "";
+    /* The one place a second gesture can announce itself. A row that opens on
+     * tap and has an entity behind it says so on hover and to a screen
+     * reader; nothing else on the card needs telling. */
+    const hint = e.members && e.entity ? ` title="${esc(text.hold)}"` : "";
     const left =
       `<div class="tx"><div class="t">${esc(e.title)}</div>` +
       (e.sub ? `<div class="s">${this._detailHtml(e.sub)}</div>` : "") +
@@ -3344,7 +3414,7 @@ class HomeEventCard extends HTMLElement {
 
     return (
       `<div class="ev sev-${e.severity}${tone}${open ? " open" : ""}"` +
-      ` data-entity="${esc(e.entity)}"${grouped}${tabbable}>` +
+      ` data-entity="${esc(e.entity)}"${grouped}${tabbable}${hint}>` +
       `<ha-icon class="ic" icon="${esc(e.icon)}"></ha-icon>` +
       left +
       `<div class="rt">` +
@@ -3353,16 +3423,7 @@ class HomeEventCard extends HTMLElement {
         ? `<div class="tm" data-at="${e.at}" data-mode="${e.mode}">${esc(time)}</div>`
         : "") +
       `</div>` +
-      /* The chevron is its own control only where it has to be - on a row
-       * whose click belongs to an entity. Everywhere else the row is the
-       * control and a second tab stop over the same action is furniture. */
-      (e.members
-        ? `<ha-icon class="exp" icon="mdi:chevron-down"` +
-          (e.entity
-            ? ` tabindex="0" role="button" aria-label="${esc(text.expand)}"`
-            : "") +
-          `></ha-icon>`
-        : "") +
+      (e.members ? `<ha-icon class="exp" icon="mdi:chevron-down"></ha-icon>` : "") +
       `</div>`
     );
   }
@@ -3739,6 +3800,16 @@ const STYLES = `
   padding: 8px 0 0;
 }
 
+/* A row you can hold has to survive being held: half a second of finger on a
+   phone otherwise selects the text under it, or raises the browser's own
+   callout menu, and the gesture is gone before it lands. Only these rows -
+   everything else on the card stays selectable and copyable. */
+.ev[data-group][data-entity]:not([data-entity=""]) {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
 [data-entity]:not([data-entity=""]) { cursor: pointer; }
 [data-entity]:not([data-entity=""]):hover {
   background-color: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
