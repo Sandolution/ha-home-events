@@ -412,12 +412,19 @@ it its own wording, or an empty one to let the domain speak.
 ### An empty wording is not a wording
 
 A text box that was never filled in saves as `""`. That means *nothing was
-written*, not *write nothing* — so an empty half is dropped and the card falls
-back, rather than drawing an empty line over the top of what it would have
-said.
+written*, not *write nothing* — so it is dropped and the card falls back,
+rather than drawing an empty line over the top of what it would have said.
 
-This is why `detail: {one: "", many: "Multiple rooms"}` shows the room on a
-group of one instead of a blank second line.
+This holds wherever the empty string is: a half of a mapping, or the whole
+option. `detail: {one: "", many: "Multiple rooms"}` shows the room on a group
+of one, and `status: ""` leaves a timer saying *Running* — the two used to
+disagree, so whether an empty box was an instruction depended on whether the
+event happened to group.
+
+A template that **resolves** to nothing is different, and still draws nothing:
+`status: "{attr.program}"` on a machine between programs was asked for, and
+answering it with the domain's own word would be answering a question nobody
+asked. Only the written value counts.
 
 ### A row never says the same thing twice
 

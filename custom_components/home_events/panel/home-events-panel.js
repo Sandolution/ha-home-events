@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-14a";
+const PANEL_BUILD = "2026-08-14b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -2304,10 +2304,19 @@ it are underneath it">Grouped</button>
         const v = this._draft[key];
         /* Collapsing keeps the first wording that says anything rather than
          * the first slot: someone who wrote only the group's wording and then
-         * changed their mind should not be handed an empty box. */
-        this._draft[key] = v && typeof v === "object"
-          ? (v.one || v.each || v.many || "")
-          : { one: typeof v === "string" ? v : "", each: "", many: "" };
+         * changed their mind should not be handed an empty box.
+         *
+         * And three empty boxes collapse to no key at all, not to "". Every
+         * other field here deletes rather than writing an empty string - this
+         * one did not, and an event came back from it carrying `status: ""`,
+         * which is a written instruction to draw nothing where there had been
+         * nothing written at all. */
+        if (v && typeof v === "object") {
+          const kept = v.one || v.each || v.many || "";
+          if (kept) this._draft[key] = kept; else delete this._draft[key];
+        } else {
+          this._draft[key] = { one: typeof v === "string" ? v : "", each: "", many: "" };
+        }
         this._setDirty(true);
         return this._renderPane();
       }

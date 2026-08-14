@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14a";
+const CARD_BUILD = "2026-08-14b";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2401,9 +2401,23 @@ class HomeEventCard extends HTMLElement {
    * and `area` carried in from the row so a template can say `{name}` without
    * repeating the friendly-name split. */
   _applyConfig(e, cfg, id, vars) {
-    if (cfg.title != null) e.title = this._interp(cfg.title, id, vars);
-    if (cfg.detail != null) e.sub = this._interp(cfg.detail, id, vars);
-    if (cfg.status != null) e.status = this._interp(cfg.status, id, vars);
+    /* An empty box is not an instruction, wherever it is written.
+     *
+     * `wording()` has always treated an empty half that way, and this did not,
+     * so `status: ""` blanked the word a timer had put there while
+     * `status: {one: ""}` left it alone - the same empty box meaning two
+     * different things depending on whether the event happened to group. It is
+     * an easy string to end up with: emptying a text box and collapsing a
+     * wording both produce one.
+     *
+     * A template that *resolves* to nothing is a different matter and still
+     * draws nothing: "{attr.program}" on a machine between programs was asked
+     * for, and answering it with the domain's own word would be answering a
+     * question nobody asked. Only the written value is checked. */
+    const said = (v) => v != null && v !== "";
+    if (said(cfg.title)) e.title = this._interp(cfg.title, id, vars);
+    if (said(cfg.detail)) e.sub = this._interp(cfg.detail, id, vars);
+    if (said(cfg.status)) e.status = this._interp(cfg.status, id, vars);
     if (cfg.icon) e.icon = cfg.icon;
     if (cfg.severity) e.severity = cfg.severity;
     if (cfg.time_mode) e.mode = cfg.time_mode;
