@@ -437,6 +437,44 @@ when the two are equal. `title: {one: "{area}"}` gives *Bath Room* and not
 to anyway. Same reason a member's detail drops the room its group already
 names.
 
+### Naming a Home Assistant group
+
+A group helper — a light group, a switch group, anything publishing its members
+in `entity_id` — is normally **dropped**, because a filter that selects it
+selects its members too and drawing both puts the same lamps on the card twice.
+The members win.
+
+**Naming one changes that.** Write its id under `include: {entities: […]}` and
+it becomes the row, with the members that are in the state the event is about
+underneath it:
+
+```yaml
+Lights (by room):
+  include: {entities: [light.kitchen_group, light.living_room_group]}
+  conditions: [{condition: state, state: "on"}]
+```
+
+There is no `group:` to set. Naming the id *is* the choice — there is no other
+reason to write down the id of a thing whose members the card would otherwise
+draw. A group swept up by `domains: [light]` is not that choice and is still
+dropped, which matters where groups nest: expanding every group a filter
+touched would draw one row for the whole building.
+
+What that gets you:
+
+- **The row is the group's own entity** — its name, its icon, its state, its
+  clock. Not a label invented from the event's name, the way an area group is.
+- **Clicking it opens the group**, so one switch turns off everything in the
+  list. This is the point of naming it, which is why the row keeps its click
+  and the **chevron** does the opening. (Area groups have nothing behind them,
+  so there the whole row opens.)
+- **It stays a group at one member.** An area group of one collapses into that
+  one thing, because nobody asked for the grouping. Here somebody did.
+- **A member is never also a row beside its group.** Name a group and one of
+  its lamps and the lamp appears once, inside.
+- `{n}` is how many members are showing, and `one`/`each`/`many` word the row
+  and its members as usual.
+
 ### Why a grouped row's detail line is usually empty
 
 Because the room is already on its title line. "Kitchen" over "Kitchen" is not

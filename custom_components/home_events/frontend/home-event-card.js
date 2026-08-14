@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14c";
+const CARD_BUILD = "2026-08-14d";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2206,6 +2206,16 @@ class HomeEventCard extends HTMLElement {
     }
     const row = path.find((n) => n && n.dataset && n.dataset.group);
     if (row) {
+      /* A row that is also an entity keeps its click.
+       *
+       * An area group has nothing behind it, so the whole row opens it. A
+       * named group helper does: reaching its switch is the reason its id was
+       * written down, and a click that opened a drawer instead would put the
+       * one control the row was added for behind a chevron. So there the
+       * chevron opens and the rest of the row is the entity. */
+      const onChevron = path.some((n) =>
+        n && n.classList && n.classList.contains("exp"));
+      if (row.dataset.entity && !onChevron) return false;
       const key = row.dataset.group;
       if (this._open.has(key)) this._open.delete(key);
       else this._open.add(key);
@@ -2364,6 +2374,16 @@ class HomeEventCard extends HTMLElement {
     if (cfg.enabled === false) return;
     const hass = this._hass;
     const grouped = [];
+    /* Groups the event named outright, and everything inside them. Both are
+     * needed before the loop: a named group is a row of its own, and a member
+     * of one must not also be a row beside it. */
+    const named = this._namedGroups(cfg);
+    const inside = new Set();
+    for (const id of named) {
+      for (const mid of (hass.states[id].attributes || {}).entity_id || []) {
+        inside.add(mid);
+      }
+    }
 
     for (const id of this._index()[name] || []) {
       const st = hass.states[id];
@@ -2375,6 +2395,14 @@ class HomeEventCard extends HTMLElement {
       if (st.state === "unavailable" || st.state === "unknown") {
         if (!namesState(cfg.conditions, st.state)) continue;
       }
+      if (named.has(id)) continue;   // drawn below, with what is in it
+      if (inside.has(id)) continue;  // drawn inside the group that holds it
+      /* A group helper publishes its members, so drawing it as well as them
+       * puts the same things on the card twice. Which of the two to keep is
+       * the author's call and they make it by naming: swept up by a domain or
+       * an area, the group is dropped and its members stand; named in
+       * `entities`, it is the row and they stand inside it. */
+      if (!drawable(st)) continue;
       if (groupMode(cfg)) {
         grouped.push(id);
         continue;
@@ -2383,7 +2411,82 @@ class HomeEventCard extends HTMLElement {
       if (row) out.push(ev(row));
     }
 
+    if (named.size) this._entityGroups(out, name, cfg, named);
     if (grouped.length) this._grouped(out, name, cfg, grouped);
+  }
+
+  /* The groups this event asked for by name.
+   *
+   * `include: {entities: [light.kitchen_group]}` is somebody choosing the
+   * group over the lamps in it - there is no other reason to write the id of a
+   * thing whose members the card would otherwise draw. A group swept up by
+   * `domains: [light]` is not the same choice and is left alone, which matters
+   * in a house whose groups nest: naming every group a filter touched would
+   * draw one row for the whole building.
+   *
+   * Excludes still apply: a group named in one line and excluded in the next
+   * was excluded. */
+  _namedGroups(cfg) {
+    const out = new Set();
+    const listed = ((cfg.include || {}).entities) || [];
+    if (!listed.length) return out;
+    const hass = this._hass;
+    for (const id of listed) {
+      const st = hass.states[id];
+      if (!st || drawable(st)) continue;
+      if (this._excluded(id, cfg, st)) continue;
+      if (st.state === "unavailable" || st.state === "unknown") {
+        if (!namesState(cfg.conditions, st.state)) continue;
+      }
+      out.add(id);
+    }
+    return out;
+  }
+
+  /* A group that was named: its own row, with the members that are in the
+   * state the event is about underneath it.
+   *
+   * Unlike an area group this row is a real entity, so it is drawn like any
+   * other row - its name, its icon, its state, its clock - rather than being
+   * invented from the event's name. That is the point of naming it: the row
+   * carries the group's own switch, and one click through it turns off
+   * everything in the list below.
+   *
+   * It stays a group at one member. An area group of one collapses, because
+   * nobody asked for that grouping and a chevron hiding a single lamp is
+   * furniture; here somebody did ask, by writing the id down.
+   */
+  _entityGroups(out, name, cfg, ids) {
+    const hass = this._hass;
+    const asEach = wording(cfg, "each");
+    for (const id of ids) {
+      const st = hass.states[id];
+      const kept = [];
+      for (const mid of (st.attributes || {}).entity_id || []) {
+        const mst = hass.states[mid];
+        if (!mst) continue;
+        if (mst.state === "unavailable" || mst.state === "unknown") {
+          if (!namesState(cfg.conditions, mst.state)) continue;
+        }
+        /* The event's own conditions, asked of each member - "all members that
+         * have the configured state". The filters are not: they selected the
+         * group, and what is in it is the group's business. */
+        if (!this._conditionsMet(cfg.conditions, mid)) continue;
+        const row = this._decorate(name, asEach, mid, mst);
+        if (row) kept.push(row);
+      }
+      const e = this._base(name, cfg, id, st);
+      const fn = RENDERERS[id.slice(0, id.indexOf("."))];
+      if (fn && this[fn](e, cfg, id, st) === false) continue;
+      const row = this._applyConfig(e, wording(cfg, "many"), id, {
+        name: e.title, area: e.area, n: kept.length,
+      });
+      /* No chevron over nothing. A group can pass the event while none of its
+       * members do - one lamp on for ten seconds under `for: 5 minutes` - and
+       * an empty drawer is worse than no drawer. */
+      if (kept.length) row.members = kept;
+      out.push(ev(row));
+    }
   }
 
   /* The row for one entity: the common shape, then whatever its domain knows,
@@ -2620,7 +2723,6 @@ class HomeEventCard extends HTMLElement {
    * look things up in. */
   _renderLight(e, cfg, id, st) {
     const a = st.attributes || {};
-    if (!drawable(st)) return false;
     e.icon = a.icon || "mdi:lightbulb";
     /* What a lamp that is on is doing is how bright it is.
      *
@@ -2723,9 +2825,14 @@ class HomeEventCard extends HTMLElement {
     const text = this._config.text;
     const a = st.attributes || {};
     e.title = this._strip(e.title, text.strip.timer);
-    e.severity = "active";
+    /* Running is what an active timer is doing, and it was what every timer
+     * row said - so an event written for `state: paused` drew a paused timer
+     * reading Running, in green. A timer has three states and only one of them
+     * is this one; the other two say what they are. */
+    const active = st.state === "active";
+    e.severity = active ? "active" : "info";
     e.icon = a.icon || "mdi:fan";
-    e.status = text.status.running;
+    e.status = active ? text.status.running : stateLabel(this._hass, st);
     /* `finishes_at` is on the timer entity itself. The old cards read
      * `sensor.<timer>_remaining` helpers that do not exist in this config, so
      * every ventilation row rendered "Active for " with nothing after it. */
@@ -3227,7 +3334,8 @@ class HomeEventCard extends HTMLElement {
   }
 
   _row(e, now) {
-    const time = e.at ? fmtRelative(e.at, e.mode, now, this._config.text.time) : "";
+    const text = this._config.text;
+    const time = e.at ? fmtRelative(e.at, e.mode, now, text.time) : "";
     const tone = e.tone ? ` tone-${e.tone}` : "";
     const open = e.members ? this._open.has(e.key) : false;
     const grouped = e.members
@@ -3250,7 +3358,16 @@ class HomeEventCard extends HTMLElement {
         ? `<div class="tm" data-at="${e.at}" data-mode="${e.mode}">${esc(time)}</div>`
         : "") +
       `</div>` +
-      (e.members ? `<ha-icon class="exp" icon="mdi:chevron-down"></ha-icon>` : "") +
+      /* The chevron is its own control only where it has to be - on a row
+       * whose click belongs to an entity. Everywhere else the row is the
+       * control and a second tab stop over the same action is furniture. */
+      (e.members
+        ? `<ha-icon class="exp" icon="mdi:chevron-down"` +
+          (e.entity
+            ? ` tabindex="0" role="button" aria-label="${esc(text.expand)}"`
+            : "") +
+          `></ha-icon>`
+        : "") +
       `</div>`
     );
   }
