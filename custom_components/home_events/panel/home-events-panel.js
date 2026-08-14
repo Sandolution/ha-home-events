@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-14e";
+const PANEL_BUILD = "2026-08-14f";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -2120,6 +2120,27 @@ it are underneath it">Grouped</button>
 
   /* ------------------------------------------------------------ the count */
 
+  /* The count box is redrawn whenever the house moves, which here is several
+   * times a second, and the list inside it is 260px of scroll. Rewriting
+   * identical markup threw away where somebody had scrolled to about once a
+   * second - so the list was unreadable exactly while it was being read.
+   *
+   * Nothing is written unless something changed, and when something has, the
+   * offset is put back. Same rule the card follows for a scrolled section, and
+   * the same reason: a position somebody chose is not the card's to reset.
+   *
+   * The last markup is kept on the element rather than on the panel, because
+   * a redraw of the pane makes a new box and a stale string would match it. */
+  _setCount(box, html) {
+    if (box._html === html) return;
+    const was = box.querySelector(".matches");
+    const y = was ? was.scrollTop : 0;
+    box._html = html;
+    box.innerHTML = html;
+    const now = box.querySelector(".matches");
+    if (now && y) now.scrollTop = y;
+  }
+
   _recount() {
     const box = this._el.pane.querySelector("[data-count]");
     if (!box) return;
@@ -2128,9 +2149,9 @@ it are underneath it">Grouped</button>
       (k) => k !== "match" && (include[k] || []).length
     );
     if (!this._engine || !anything) {
-      box.innerHTML = anything || this._sub !== "when" ? "" :
+      this._setCount(box, anything || this._sub !== "when" ? "" :
         `<span class="dim">Nothing to check yet — say what this event covers
-          on the What tab.</span>`;
+          on the What tab.</span>`);
       return;
     }
     let ids;
@@ -2143,12 +2164,12 @@ it are underneath it">Grouped</button>
     } catch (err) {
       /* A half-written filter is the normal case in an editor: two dimensions
        * and no `match` yet is a sentence somebody is in the middle of. */
-      box.innerHTML = `<span class="dim">${esc(this._reason(err))}</span>`;
+      this._setCount(box, `<span class="dim">${esc(this._reason(err))}</span>`);
       return;
     }
-    box.innerHTML = this._sub === "when"
+    this._setCount(box, this._sub === "when"
       ? this._passingHtml(ids)
-      : this._matchCountHtml(ids);
+      : this._matchCountHtml(ids));
   }
 
   _matchCountHtml(ids) {
