@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-14f";
+const PANEL_BUILD = "2026-08-14g";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -287,7 +287,13 @@ const HELP = {
     "naming some - a domain, a room, a floor, a label, a device, an entity, " +
     "or a pattern.",
   exclude: "Entities to leave out of what Include selected. An event with " +
-    "nothing here covers everything Include names.",
+    "nothing here covers everything Include names.\n\n" +
+    "An exclude removes, whichever way it names things: a room excluded from " +
+    "a pattern is out, a floor excluded from a domain is out. The one thing " +
+    "it does not beat is an entity written into Include by id - naming one " +
+    "thing is unambiguous in a way a room is not - so \"not this room, but " +
+    "that lamp in it\" is sayable. The same id on both sides is a tie, and " +
+    "ties go to the exclude.",
   conditions: "And in which state. An event with no conditions shows every " +
     "entity it covers, whatever they are doing.",
   sort: "How the rows inside a section read. Severity always comes first and " +

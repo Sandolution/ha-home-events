@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14f";
+const CARD_BUILD = "2026-08-14g";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1081,23 +1081,28 @@ function matchesArea(areaName, list) {
  * sit in on a config screen. Labels are the entity-level tag, and they are.
  *
  * ---------------------------------------------------------------------------
- * Precedence is a specificity ladder, not recorder's seven-step rule:
+ * Precedence: exclude removes, and only an exact id survives it.
  *
- *     7  entities        an exact id
- *     6  entity_globs    a pattern you wrote about ids
- *     5  devices         one physical thing
- *     4  labels          a tag you put on it by hand
- *     3  areas           the room it is in
- *     2  floors          the storey that room is on
- *     1  domains         what kind of thing it is
+ *     2  entities        an exact id, which is somebody naming this one thing
+ *     1  everything else a pattern, a room, a floor, a label, a domain
  *
- * Narrower beats broader, and exclude wins a tie at the same level. That is
- * what makes "every switch except the pond pump" work, which is the one thing
- * recorder's ordering buys that a simple exclude-beats-include does not, and
- * it extends the obvious way: "the whole second floor except the nursery"
- * needs areas to outrank floors, and it does. The rest of recorder's
- * complexity only shows up in corners a dashboard never reaches, and costs a
- * documentation table to describe.
+ * Exclude wins at the same level and below, so "every switch except the pond
+ * pump" works - and so does everything else anybody writes an exclude for.
+ *
+ * This was a seven-rung ladder, one per dimension, on the reasoning that
+ * narrower should beat broader: a room is more specific than a floor, a glob
+ * more specific than a room. It reads well and it silently threw away whole
+ * exclude blocks. An event including `entity_globs: ["*_group"]` and excluding
+ * ten areas kept every one of them, because a glob sat two rungs above a room
+ * and nothing said so - not the card, not the panel, not the count that
+ * cheerfully reported twenty matches. An exclude that does nothing is worse
+ * than an exclude that is refused.
+ *
+ * The one case worth keeping is the opposite of the pond pump: "not this room,
+ * but that lamp in it". Naming an id is unambiguous in a way no pattern is -
+ * the same reason a named group beats a swept-up one - so an id in `entities`
+ * outranks an exclude that did not name it. `exclude: {entities: [x]}` against
+ * `include: {entities: [x]}` is a tie, and ties go to exclude.
  *
  * If `include` is given at all and nothing in it matched, the entity is out. */
 /* How the rows inside a section are ordered. Severity always comes first -
@@ -1110,17 +1115,17 @@ const FILTER_KEYS = [
   "domains", "floors", "areas", "labels", "devices", "entities", "entity_globs",
 ];
 
-/* The ladder, most specific first, so the walk can stop at the first hit when
- * the block is a union. Rungs are explicit rather than derived from the array
- * order: the order above reads as a list of dimensions, and tying precedence
- * to how it happens to be sorted is a trap for whoever edits it next. */
+/* Two rungs, most specific first so the walk can stop at the first hit when
+ * the block is a union. Only an exact id is above the line: everything else
+ * describes a set somebody might not have had in mind entity by entity, which
+ * is exactly when an exclude has to be able to take one out. */
 const FILTER_RUNGS = [
-  [7, "entities"],
-  [6, "entity_globs"],
-  [5, "devices"],
-  [4, "labels"],
-  [3, "areas"],
-  [2, "floors"],
+  [2, "entities"],
+  [1, "entity_globs"],
+  [1, "devices"],
+  [1, "labels"],
+  [1, "areas"],
+  [1, "floors"],
   [1, "domains"],
 ];
 
@@ -2421,6 +2426,20 @@ class HomeEventCard extends HTMLElement {
     return !this._conditionsMet((sourceCfg || {}).conditions, entityId);
   }
 
+  /* Named in this event's exclude, by whatever dimension. Only the exclude:
+   * this asks "was I told not to", not "was I selected". */
+  _shunned(entityId, sourceCfg) {
+    const src = sourceCfg || {};
+    if (!src._exclude) return false;
+    const need = src._needs || NO_NEEDS;
+    const ctx = { area: null, labels: null, devices: null, floors: null };
+    if (need.areas) ctx.area = this._areaName(entityId, this._hass.states[entityId]);
+    if (need.labels) ctx.labels = this._labels(entityId);
+    if (need.devices) ctx.devices = this._deviceKeys(entityId);
+    if (need.floors) ctx.floors = this._floorKeys(entityId);
+    return filterLevel(src._exclude, entityId, ctx) > 0;
+  }
+
   /* The filter half of the same question: what this event is about, before any
    * question of what state it is in.
    *
@@ -2530,8 +2549,14 @@ class HomeEventCard extends HTMLElement {
           if (!namesState(cfg.conditions, mst.state)) continue;
         }
         /* The event's own conditions, asked of each member - "all members that
-         * have the configured state". The filters are not: they selected the
-         * group, and what is in it is the group's business. */
+         * have the configured state".
+         *
+         * The include is not asked: it selected the group, and it will not
+         * match what is inside one (a lamp is not `*_group`). The exclude is,
+         * because an exclude is not a way of selecting - it is somebody saying
+         * "not that", and a thing you said not to show is not something to
+         * show inside a drawer. */
+        if (this._shunned(mid, cfg)) continue;
         if (!this._conditionsMet(cfg.conditions, mid)) continue;
         const row = this._decorate(name, asEach, mid, mst);
         if (row) kept.push(row);

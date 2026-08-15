@@ -284,6 +284,28 @@ schema refuses to guess. Two values of *one* dimension are always "either" —
 an entity is in one room, and asking for two rooms at once would select
 nothing.
 
+**An exclude removes.** The only thing that survives one is an id written into
+`include: {entities: […]}` — naming one thing is unambiguous in a way a pattern
+or a room is not, so "not this room, but that lamp in it" is sayable. Naming
+the same id on both sides is a tie, and ties go to the exclude.
+
+| include | exclude | |
+|---|---|---|
+| `domains: [switch]` | `entities: [switch.pond_pump]` | every switch except the pond pump |
+| `entity_globs: ["*_group"]` | `areas: [kitchen]`, `floors: [ground_floor]` | every group except those |
+| `entities: [light.hall_lamp]` | `areas: [hallway]` | the hallway is out, that lamp is not |
+| `entities: [light.hall_lamp]` | `entities: [light.hall_lamp]` | nothing — a tie goes to the exclude |
+
+This used to be a seven-rung ladder, one rung per dimension, on the reasoning
+that narrower should beat broader. It reads well and it silently discarded
+whole exclude blocks: a glob outranked a room by two rungs, so an event
+including `*_group` and excluding ten areas kept all ten. An exclude that does
+nothing is worse than one that is refused.
+
+An excluded entity stays excluded **inside a group's drawer** too. The include
+is not asked there — a lamp is not `*_group` and never would be — but "not
+that" is still "not that".
+
 The Event Manager fills this in for you and shows the count as you type.
 
 ### conditions
