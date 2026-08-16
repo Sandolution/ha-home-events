@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-16a";
+const PANEL_BUILD = "2026-08-16b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -294,9 +294,11 @@ const HELP = {
     "thing is unambiguous in a way a room is not - so \"not this room, but " +
     "that lamp in it\" is sayable. The same id on both sides is a tie, and " +
     "ties go to the exclude.\n\n" +
-    "Inside a group's list, only an exclude by id still applies: a pattern or " +
-    "a room here is about which groups this event covers, and reading it " +
-    "again against the entities inside one empties lists nobody aimed at.",
+    "An exclude reaches inside a group's list too, however it is written. And " +
+    "a group left holding nothing but excluded things gets no row at all - it " +
+    "would say a room is busy and be unable to say by what, the what being " +
+    "the thing you excluded. A group whose members are merely not in the " +
+    "state yet still gets its row; it just has nothing to open.",
   conditions: "And in which state. An event with no conditions shows every " +
     "entity it covers, whatever they are doing.",
   sort: "How the rows inside a section read. Severity always comes first and " +

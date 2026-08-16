@@ -302,13 +302,21 @@ whole exclude blocks: a glob outranked a room by two rungs, so an event
 including `*_group` and excluding ten areas kept all ten. An exclude that does
 nothing is worse than one that is refused.
 
-**Inside a group's drawer, only an exclude by id still applies.** The include
-is not asked there at all — a lamp is not `*_group` and never would be — and
-a pattern, a room or a floor was written about the things the event *selects*,
-which are groups. Reading those again against the lamps inside empties drawers
-nobody aimed at: `entity_globs: ["light.*nightstands*"]`, written to keep one
-group off the card, otherwise takes the lit lamp out of every bedroom that has
-one. An id is the exception, because an id is one thing named outright.
+**An exclude reaches inside a group's drawer too**, however it was written —
+by id, by pattern, by room, by floor. The include is not asked there (a lamp is
+not `*_group` and never would be), but "not that" is not a way of selecting
+things: it is you saying you do not want to see it, and a thing you do not want
+to see is not one to put in a drawer.
+
+**And a group left holding nothing but excluded things is not a row.** It would
+say a room is lit and be unable to say by what — the what being the lamp you
+excluded — so the row is that lamp wearing the room's name, which is the thing
+the exclude was written to be rid of.
+
+That last rule fires only when something really was excluded. A group whose
+members are simply not in the state yet — `for: 5 minutes`, and the group's own
+clock passed first — still gets its row, because nothing was withheld from it.
+It just has nothing to open.
 
 The Event Manager fills this in for you and shows the count as you type.
 

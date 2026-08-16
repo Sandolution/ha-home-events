@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-16a";
+const CARD_BUILD = "2026-08-16b";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2426,12 +2426,18 @@ class HomeEventCard extends HTMLElement {
     return !this._conditionsMet((sourceCfg || {}).conditions, entityId);
   }
 
-  /* Excluded by id, rather than by something that describes a set. Asks "was
-   * I told not to show this one thing", which is the only part of an exclude
-   * that still means anything about what is inside a group. */
-  _namedOut(entityId, sourceCfg) {
-    const ex = (sourceCfg || {})._exclude;
-    return !!ex && !!ex.entities && ex.entities.indexOf(entityId) !== -1;
+  /* Named in this event's exclude, by whatever dimension. Only the exclude:
+   * this asks "was I told not to", not "was I selected". */
+  _shunned(entityId, sourceCfg) {
+    const src = sourceCfg || {};
+    if (!src._exclude) return false;
+    const need = src._needs || NO_NEEDS;
+    const ctx = { area: null, labels: null, devices: null, floors: null };
+    if (need.areas) ctx.area = this._areaName(entityId, this._hass.states[entityId]);
+    if (need.labels) ctx.labels = this._labels(entityId);
+    if (need.devices) ctx.devices = this._deviceKeys(entityId);
+    if (need.floors) ctx.floors = this._floorKeys(entityId);
+    return filterLevel(src._exclude, entityId, ctx) > 0;
   }
 
   /* The filter half of the same question: what this event is about, before any
@@ -2536,6 +2542,10 @@ class HomeEventCard extends HTMLElement {
       }
       if (!this._conditionsMet(cfg.conditions, id)) continue;
       const kept = [];
+      /* Members that would have been rows and were excluded. The count is the
+       * difference between "nothing in here is happening" and "everything
+       * happening in here is something you said not to show" - see below. */
+      let shunned = 0;
       for (const mid of (st.attributes || {}).entity_id || []) {
         const mst = hass.states[mid];
         if (!mst) continue;
@@ -2543,22 +2553,26 @@ class HomeEventCard extends HTMLElement {
           if (!namesState(cfg.conditions, mst.state)) continue;
         }
         /* The event's own conditions, asked of each member - "all members that
-         * have the configured state".
-         *
-         * The include is not asked: it selected the group, and it will not
-         * match what is inside one (a lamp is not `*_group`). Of the exclude,
-         * only the ids: an event that covers groups writes its patterns, rooms
-         * and floors about *groups*, and reading them again against the lamps
-         * inside emptied three drawers here the day it was tried -
-         * `entity_globs: ["light.*nightstands*"]`, written to keep one group
-         * off the card, also took the lit lamp out of every room that had one.
-         * An id is the exception because an id is one thing named outright:
-         * "never show me this" means in a drawer too. */
-        if (this._namedOut(mid, cfg)) continue;
+         * have the configured state". The include is not asked: it selected
+         * the group, and it will not match what is inside one (a lamp is not
+         * `*_group`). The exclude is, in full: "not that" is not a way of
+         * selecting things, it is somebody saying they do not want to see it,
+         * and a thing you do not want to see is not one to put in a drawer. */
         if (!this._conditionsMet(cfg.conditions, mid)) continue;
+        if (this._shunned(mid, cfg)) { shunned++; continue; }
         const row = this._decorate(name, asEach, mid, mst);
         if (row) kept.push(row);
       }
+      /* A group holding nothing but excluded things is not a row.
+       *
+       * It would be one that says a room is lit and cannot say by what,
+       * because the what is the lamp that was excluded - the row is that lamp
+       * wearing the room's name, which is the thing the exclude was written to
+       * be rid of. Only when something was excluded: a group whose members are
+       * simply not in the state yet - `for: 5 minutes`, and the group's own
+       * clock passed first - still gets its row, because nothing was withheld
+       * from it. */
+      if (!kept.length && shunned) continue;
       const e = this._base(name, cfg, id, st);
       const fn = RENDERERS[id.slice(0, id.indexOf("."))];
       if (fn && this[fn](e, cfg, id, st) === false) continue;
