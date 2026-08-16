@@ -302,9 +302,13 @@ whole exclude blocks: a glob outranked a room by two rungs, so an event
 including `*_group` and excluding ten areas kept all ten. An exclude that does
 nothing is worse than one that is refused.
 
-An excluded entity stays excluded **inside a group's drawer** too. The include
-is not asked there — a lamp is not `*_group` and never would be — but "not
-that" is still "not that".
+**Inside a group's drawer, only an exclude by id still applies.** The include
+is not asked there at all — a lamp is not `*_group` and never would be — and
+a pattern, a room or a floor was written about the things the event *selects*,
+which are groups. Reading those again against the lamps inside empties drawers
+nobody aimed at: `entity_globs: ["light.*nightstands*"]`, written to keep one
+group off the card, otherwise takes the lit lamp out of every bedroom that has
+one. An id is the exception, because an id is one thing named outright.
 
 The Event Manager fills this in for you and shows the count as you type.
 

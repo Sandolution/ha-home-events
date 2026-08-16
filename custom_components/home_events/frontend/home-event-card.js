@@ -386,7 +386,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-14g";
+const CARD_BUILD = "2026-08-16a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -2426,18 +2426,12 @@ class HomeEventCard extends HTMLElement {
     return !this._conditionsMet((sourceCfg || {}).conditions, entityId);
   }
 
-  /* Named in this event's exclude, by whatever dimension. Only the exclude:
-   * this asks "was I told not to", not "was I selected". */
-  _shunned(entityId, sourceCfg) {
-    const src = sourceCfg || {};
-    if (!src._exclude) return false;
-    const need = src._needs || NO_NEEDS;
-    const ctx = { area: null, labels: null, devices: null, floors: null };
-    if (need.areas) ctx.area = this._areaName(entityId, this._hass.states[entityId]);
-    if (need.labels) ctx.labels = this._labels(entityId);
-    if (need.devices) ctx.devices = this._deviceKeys(entityId);
-    if (need.floors) ctx.floors = this._floorKeys(entityId);
-    return filterLevel(src._exclude, entityId, ctx) > 0;
+  /* Excluded by id, rather than by something that describes a set. Asks "was
+   * I told not to show this one thing", which is the only part of an exclude
+   * that still means anything about what is inside a group. */
+  _namedOut(entityId, sourceCfg) {
+    const ex = (sourceCfg || {})._exclude;
+    return !!ex && !!ex.entities && ex.entities.indexOf(entityId) !== -1;
   }
 
   /* The filter half of the same question: what this event is about, before any
@@ -2552,11 +2546,15 @@ class HomeEventCard extends HTMLElement {
          * have the configured state".
          *
          * The include is not asked: it selected the group, and it will not
-         * match what is inside one (a lamp is not `*_group`). The exclude is,
-         * because an exclude is not a way of selecting - it is somebody saying
-         * "not that", and a thing you said not to show is not something to
-         * show inside a drawer. */
-        if (this._shunned(mid, cfg)) continue;
+         * match what is inside one (a lamp is not `*_group`). Of the exclude,
+         * only the ids: an event that covers groups writes its patterns, rooms
+         * and floors about *groups*, and reading them again against the lamps
+         * inside emptied three drawers here the day it was tried -
+         * `entity_globs: ["light.*nightstands*"]`, written to keep one group
+         * off the card, also took the lit lamp out of every room that had one.
+         * An id is the exception because an id is one thing named outright:
+         * "never show me this" means in a drawer too. */
+        if (this._namedOut(mid, cfg)) continue;
         if (!this._conditionsMet(cfg.conditions, mid)) continue;
         const row = this._decorate(name, asEach, mid, mst);
         if (row) kept.push(row);
@@ -3432,8 +3430,14 @@ class HomeEventCard extends HTMLElement {
      * tap and has an entity behind it says so on hover and to a screen
      * reader; nothing else on the card needs telling. */
     const hint = e.members && e.entity ? ` title="${esc(text.hold)}"` : "";
+    /* The caret belongs to the name, not to the edge of the card. It sits
+     * right after the title, inside the column the title already has, so a
+     * long name gives way to it rather than the other way round. */
     const left =
-      `<div class="tx"><div class="t">${esc(e.title)}</div>` +
+      `<div class="tx">` +
+      `<div class="tline"><div class="t">${esc(e.title)}</div>` +
+      (e.members ? `<ha-icon class="exp" icon="mdi:chevron-down"></ha-icon>` : "") +
+      `</div>` +
       (e.sub ? `<div class="s">${this._detailHtml(e.sub)}</div>` : "") +
       `</div>`;
 
@@ -3448,7 +3452,6 @@ class HomeEventCard extends HTMLElement {
         ? `<div class="tm" data-at="${e.at}" data-mode="${e.mode}">${esc(time)}</div>`
         : "") +
       `</div>` +
-      (e.members ? `<ha-icon class="exp" icon="mdi:chevron-down"></ha-icon>` : "") +
       `</div>`
     );
   }
@@ -3602,14 +3605,14 @@ const STYLES = `
   --row-h: 45px;
   --row-gap: 3px;
   max-height: calc((var(--max) + .45) * (var(--row-h) + var(--row-gap)));
-  /* A scroll container clips what hangs outside it, and two things do: every
+  /* A scroll container clips what hangs outside it, and one thing does: every
      row bleeds 6px either side so its hover and alert tints reach past the
-     text, and a grouped row's chevron sits 12px beyond the text on the right.
-     Growing into the card's padding by exactly those amounts keeps both
+     text. Growing into the card's padding by exactly that much keeps them
      visible and keeps the sideways scroll the clipping would otherwise
-     produce from ever existing. */
-  padding-inline: 6px 12px;
-  margin-inline: -6px -12px;
+     produce from ever existing. (It was 12px on the right while the caret
+     lived out there; the caret is on the title line now.) */
+  padding-inline: 6px;
+  margin-inline: -6px;
   overflow-y: auto;
   /* A glance panel must not steal the page scroll when a section runs out. */
   overscroll-behavior: contain;
@@ -3676,27 +3679,32 @@ const STYLES = `
   border-radius: 9px;
   position: relative;
 }
-/* The chevron is an affordance, not content, so it does not get a column.
+/* The caret goes with the name.
 
-   In flow it did: a fourth column pushed a grouped row's status and time 29px
-   left of every other row's on the card, and the children had to be inset to
-   match. On a list whose whole argument is that a dishwasher, a radiator and a
-   lit room line up and can be read straight down, that is the one thing there
-   is no room for. It sits in the card's own 14px of padding instead, starting
-   where the text stops, so the grid is untouched and everything - grouped rows,
-   their children, and every ordinary row - shares one right edge. */
+   It had a column once: a fourth one pushed a grouped row's status and time
+   29px left of every other row on the card, which is the one thing a list
+   whose argument is "these line up and can be read straight down" cannot
+   afford. So it moved out of the grid and into the card's own padding, hard
+   against the right edge - aligned, and crammed into the corner furthest from
+   anything it was about, with the row's time ending under it.
+
+   Here instead: immediately after the title, in the column the title already
+   has. It reads as a disclosure on the thing it discloses, it costs the grid
+   nothing, and a long name gives way to it rather than the other way round -
+   the title truncates, the caret stays. Tapping is the row's job either way,
+   so this is a sign rather than a target. */
+.tline { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.tline .t { min-width: 0; }
 .ev .exp {
-  position: absolute;
-  inset-inline-end: -6px;
-  top: 50%;
-  transform: translateY(-50%);
-  --mdc-icon-size: 14px;
-  width: 14px; height: 14px;
-  color: var(--disabled-text-color);
+  flex: none;
+  --mdc-icon-size: 16px;
+  width: 16px; height: 16px;
+  color: var(--secondary-text-color);
+  opacity: .8;
   transition: transform .15s ease;
 }
 @media (prefers-reduced-motion: reduce) { .ev .exp { transition: none; } }
-.ev.open .exp { transform: translateY(-50%) rotate(180deg); }
+.ev.open .exp { transform: rotate(180deg); }
 
 /* What an open row counted.
 
