@@ -112,6 +112,11 @@
  * Climate is the one exception: cooling borrows the theme's cool blue, because
  * heat and cold are the one distinction a glance should never have to read.
  *
+ * An event may say otherwise with `icon_color`, which colours its icon and
+ * nothing else - the status word and an alert's tinted row still answer to
+ * severity, because those are the scan this list is for. It is a way of
+ * telling two quiet events apart, not a second severity scale.
+ *
  * ---------------------------------------------------------------------------
  * Motion and cost
  *
@@ -236,6 +241,10 @@
  *     status        template for the state word, top right
  *     icon          overrides the entity's own, and the one Home Assistant
  *                   would have resolved for it - see _stateIcon
+ *     icon_color    what the icon is coloured, instead of what its severity
+ *                   would have coloured it. One of the card's own six -
+ *                   alert, attention, active, info, heat, cool - a Home
+ *                   Assistant palette name, or CSS. See ICON_COLORS
  *
  * ---------------------------------------------------------------------------
  * Filters
@@ -310,9 +319,9 @@
  * editor and reused somewhere else.
  *
  * Grouping makes three kinds of row, and they are read in three places, so
- * `title`, `detail`, `status`, `icon` and `time_mode` take a mapping - and
- * only when the event groups, since ungrouped every row it draws is a single
- * thing:
+ * `title`, `detail`, `status`, `icon`, `icon_color` and `time_mode` take a
+ * mapping - and only when the event groups, since ungrouped every row it draws
+ * is a single thing:
  *
  *     one    a row standing for a single entity, on its own: an event that is
  *            not grouping, or a group that turned out to hold one thing
@@ -382,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-16c";
+const CARD_BUILD = "2026-08-22a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -411,6 +420,7 @@ const GENERIC_CATEGORY = "generic";
 const EVENT_KEYS = [
   "enabled", "category", "group", "include", "exclude", "conditions",
   "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
+  "icon_color",
 ];
 
 /* Slots a grouped event may word two ways, because a row that counts has to
@@ -420,7 +430,8 @@ const EVENT_KEYS = [
  * mappings were always describing. */
 /* The options that take a wording per kind of row, rather than one value for
  * every row the event draws. See `wording()`. */
-const PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"];
+const PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
+                     "time_mode"];
 const WORDING_KEYS = ["one", "each", "many"];
 
 /* How a grouping event collapses its rows.
@@ -462,6 +473,63 @@ const HOLD_SLOP = 10;
 
 const SEVERITIES = ["alert", "attention", "active", "info"];
 const TIME_MODES = ["since", "until", "ago", "remaining"];
+
+/* ---- icon colour ----
+ *
+ * What an icon is coloured is decided for it: by severity, and for climate by
+ * which way the house is going (see the severity block in the header, and the
+ * `.sev-*` and `.tone-*` rules in STYLES). Those six are the colours the card
+ * hands out by itself, and they are the six named first here - `icon_color:
+ * active` is the green a running washer already wears, said out loud, so an
+ * event that wants that green without claiming that urgency can ask for it.
+ *
+ * After them Home Assistant's own palette, spelled the way the tile card
+ * spells it - deep-purple, blue-grey - so a colour chosen here is the colour
+ * chosen anywhere else on the dashboard, and follows the theme rather than
+ * being frozen at whatever it looked like the day it was written.
+ *
+ * A theme that defines none of these leaves the icon the colour it already
+ * was: an undefined var() invalidates the declaration and the row's own
+ * colour stands, which is the way for this to fail.
+ */
+const ICON_COLORS = {
+  alert: "var(--error-color, var(--red-color, #d8574a))",
+  attention: "var(--warning-color, var(--amber-color, #d8a24e))",
+  active: "var(--success-color, var(--green-color, #5cb87f))",
+  info: "var(--secondary-text-color)",
+  heat: "var(--state-climate-heat-color, var(--amber-color, #d8a24e))",
+  cool: "var(--state-climate-cool-color, var(--blue-color, #5f9ede))",
+};
+/* home-events-panel.js: PALETTE, and schema.py: PALETTE. */
+const PALETTE = [
+  "primary", "accent", "disabled",
+  "red", "pink", "purple", "deep-purple", "indigo", "blue", "light-blue",
+  "cyan", "teal", "green", "light-green", "lime", "yellow", "amber", "orange",
+  "deep-orange", "brown", "light-grey", "grey", "dark-grey", "blue-grey",
+  "black", "white",
+];
+for (const hue of PALETTE) ICON_COLORS[hue] = `var(--${hue}-color)`;
+
+/* Anything that is not one of those names has to look like a colour before it
+ * is written into a style attribute - not politeness, arithmetic: the value
+ * lands inside `style="..."`, where a semicolon starts a second declaration
+ * nobody asked for. Hex, the colour functions, and var(). A bare word is not
+ * accepted: CSS has 148 of them, and a typo among them is a colour that
+ * silently does nothing, which is the one outcome worth refusing outright. */
+const CSS_COLOR =
+  /^(#[0-9a-f]{3,8}|(?:rgba?|hsla?|color-mix|var)\([^;{}<>"'\\]*\))$/i;
+
+/* One written colour as CSS, or null when it is not one. Names are matched
+ * loosely - case, spaces and underscores are how a person writes deep_purple
+ * for deep-purple, and refusing that would be refusing a spelling rather than
+ * a mistake. */
+function iconColorCss(value) {
+  if (typeof value !== "string") return null;
+  const written = value.trim();
+  if (!written) return null;
+  const named = ICON_COLORS[written.toLowerCase().replace(/[\s_]+/g, "-")];
+  return named || (CSS_COLOR.test(written) ? written : null);
+}
 
 /* Every string the card writes itself, so the card can be translated or
  * reworded without touching the code.
@@ -1579,6 +1647,7 @@ function temp(v) {
  *   mode      since | until | ago | remaining
  *   entity    what a tap opens
  *   tone      optional colour override for climate's cool blue
+ *   iconColor optional CSS colour for the icon, from the event's icon_color
  */
 function ev(o) {
   return {
@@ -1593,6 +1662,7 @@ function ev(o) {
     mode: o.mode || "since",
     entity: o.entity || "",
     tone: o.tone || null,
+    iconColor: o.iconColor || null,
     area: o.area || null,
     members: o.members || null,
   };
@@ -1732,6 +1802,27 @@ class HomeEventCard extends HTMLElement {
                 "`conditions` that tell them apart."
             );
           }
+        }
+      }
+      /* A colour rather than a word from a scale, so it is checked against
+       * what CSS will do with it rather than against a list of four. Here and
+       * not at paint time: an icon that quietly kept its old colour is the
+       * hardest kind of typo to find, and the panel refuses the same value
+       * with the same reasoning before it is ever written. */
+      {
+        const written = e.icon_color;
+        for (const value of isPlainObject(written) ? Object.values(written)
+                                                   : [written]) {
+          if (value == null || value === "") continue; // nothing written
+          if (iconColorCss(value)) continue;
+          throw new Error(
+            `home-event-card: \`icon_color\` on events.${name} is ` +
+              `${JSON.stringify(value)}, which is not a colour. Write one of ` +
+              `${SEVERITIES.join(", ")}, heat or cool - the colours the card ` +
+              "paints by itself - or a Home Assistant palette name " +
+              `(${PALETTE.slice(3, 9).join(", ")}, ...), or CSS: #rrggbb, ` +
+              "rgb(...), hsl(...), color-mix(...) or var(--your-variable)."
+          );
         }
       }
       if (e.group !== undefined && GROUP_MODES.indexOf(e.group) === -1) {
@@ -2601,6 +2692,13 @@ class HomeEventCard extends HTMLElement {
     if (said(cfg.detail)) e.sub = this._interp(cfg.detail, id, vars);
     if (said(cfg.status)) e.status = this._interp(cfg.status, id, vars);
     if (cfg.icon) e.icon = cfg.icon;
+    /* Resolved here rather than at paint time, so the row carries a colour
+     * and not a word to look up. Compiling refused anything that does not
+     * resolve, so the guard is for a row built by hand in a test. */
+    if (said(cfg.icon_color)) {
+      const css = iconColorCss(cfg.icon_color);
+      if (css) e.iconColor = css;
+    }
     if (cfg.severity) e.severity = cfg.severity;
     if (cfg.time_mode) e.mode = cfg.time_mode;
     if (cfg.show_time === false) e.at = null;
@@ -3425,7 +3523,11 @@ class HomeEventCard extends HTMLElement {
     return (
       `<div class="ev sev-${e.severity}${tone}${open ? " open" : ""}"` +
       ` data-entity="${esc(e.entity)}"${grouped}${tabbable}${hint}>` +
-      `<ha-icon class="ic" icon="${esc(e.icon)}"></ha-icon>` +
+      /* Inline, because it is this row's colour rather than this card's:
+         it has to beat the .sev-* and .tone-* rules, and an inline
+         declaration is the one thing that does without !important. */
+      `<ha-icon class="ic"${e.iconColor ? ` style="color:${esc(e.iconColor)}"` : ""}` +
+      ` icon="${esc(e.icon)}"></ha-icon>` +
       left +
       `<div class="rt">` +
       (e.status ? `<div class="st">${esc(e.status)}</div>` : "") +
@@ -3884,7 +3986,10 @@ export function passingEntities(hass, ids, conditions) {
   return (ids || []).filter((id) => probe._conditionsMet(compiled, id));
 }
 
-export { HomeEventCard, CARD_BUILD };
+/* `iconColorCss` for the Event Manager's colour swatches: the table that
+ * paints the rows is the table the form should be showing, and a second
+ * copy of it in the panel would be a copy that drifts. */
+export { HomeEventCard, CARD_BUILD, iconColorCss };
 
 if (!customElements.get("home-event-card")) {
   customElements.define("home-event-card", HomeEventCard);

@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-16b";
+const PANEL_BUILD = "2026-08-22a";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -62,6 +62,29 @@ const SEVERITIES = [
   { key: "info", label: "Info" },
 ];
 const DEFAULT_SEVERITY = "info";
+
+/* home-event-card.js: ICON_COLORS. What the card paints an icon by itself -
+ * the four severities, and climate's two - offered by name so an event can ask
+ * for the same green as a running washer without claiming the same urgency.
+ * The names are the card's; the words beside them are this form's. */
+const CARD_COLOURS = [
+  ["alert", "Alert red"],
+  ["attention", "Attention amber"],
+  ["active", "Active green"],
+  ["info", "Info grey"],
+  ["heat", "Heating"],
+  ["cool", "Cooling"],
+];
+/* home-event-card.js: PALETTE, and schema.py: PALETTE. Home Assistant's own,
+ * spelled the way the tile card spells it, so a colour picked here is the
+ * colour picked anywhere else on the dashboard. */
+const PALETTE = [
+  "primary", "accent", "disabled",
+  "red", "pink", "purple", "deep-purple", "indigo", "blue", "light-blue",
+  "cyan", "teal", "green", "light-green", "lime", "yellow", "amber", "orange",
+  "deep-orange", "brown", "light-grey", "grey", "dark-grey", "blue-grey",
+  "black", "white",
+];
 /* home-event-card.js: SORT_MODES, and the one that is not a mode - a section
  * that says nothing follows whatever the card was told. */
 const SORTS = [
@@ -85,7 +108,8 @@ const GROUP_KINDS = ["and", "or", "not"];
 /* The card's PLURAL_KEYS: the slots that may be worded once per kind of row.
  * Grouping makes three - a single thing on its own, a member of an open group,
  * and the group itself - and they are read in three different places. */
-const PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"];
+const PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
+                     "time_mode"];
 /* The card's WORDING_KEYS, with what each is called on the form. `each` falls
  * back to `one` when it is left empty, which is what every config written
  * before there was a third wording relies on. */
@@ -111,6 +135,7 @@ const TEXT_SLOTS = [
   { key: "detail", label: "Detail", hint: "Usually the room" },
   { key: "status", label: "Status", hint: "The domain's own wording" },
   { key: "icon", label: "Icon", hint: "mdi:…" },
+  { key: "icon_color", label: "Icon colour", hint: "As the severity says" },
 ];
 
 /* What a new event starts as.
@@ -250,9 +275,9 @@ const HELP = {
     "whose members this same event also covers is dropped in favour of them - " +
     "there would be nothing new in the row.\n\n" +
     "Grouping makes three kinds of row, read in three places, so Title, " +
-    "Detail, Status, Icon and Time can each be worded three ways: a thing on " +
-    "its own, a thing inside an opened group, and the group's own row. Leave " +
-    "the middle one empty and it reads the same as on its own.",
+    "Detail, Status, Icon, Icon colour and Time can each be set three ways: a " +
+    "thing on its own, a thing inside an opened group, and the group's own " +
+    "row. Leave the middle one empty and it reads the same as on its own.",
   title: "The first line of the row. Left empty, the domain decides - a light " +
     "says its name, an alarm says the panel. {name}, {state} and {attr.x} are " +
     "filled in from the entity.\n\n" +
@@ -277,6 +302,15 @@ const HELP = {
   icon: "The icon at the start of the row. Left empty, the entity's own icon " +
     "is used - and where it has none, the one Home Assistant would have " +
     "drawn for it, from its device class or its integration.",
+  icon_color: "What the icon is coloured. Left alone it answers to Severity - " +
+    "red for an alert, amber for attention, green for active, grey for the " +
+    "rest - and climate keeps its own heat and cold, which is what those six " +
+    "names here are: the card's own colours, said out loud.\n\n" +
+    "The rest is Home Assistant's palette, so it follows the theme rather " +
+    "than being frozen at whatever it looked like today. Only the icon " +
+    "changes: the status word and an alert's tinted row still answer to " +
+    "Severity, because those are the scan the list is for. This is for " +
+    "telling two quiet events apart, not a second severity scale.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
     "count up from the last change, until and remaining count down to what is " +
     "next.\n\n" +
@@ -1542,6 +1576,9 @@ it are underneath it">Grouped</button>
      * opened out of sight, exactly as a criterion's is. */
     const icons = slot.key === "icon" && this._hasEl("ha-icon-picker");
     const field = (path, current, hint) => {
+      if (slot.key === "icon_color") {
+        return this._colourHtml(path, current, hint || slot.hint, d);
+      }
       if (!icons) {
         return `<input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
                   placeholder="${esc(hint || slot.hint)}" spellcheck="false">`;
@@ -1580,6 +1617,58 @@ it are underneath it">Grouped</button>
     return `<div class="field"><div class="label"${tip(slot.key)}>` +
       `${esc(slot.label)}</div>` +
       `<div>${body}${toggle}</div></div>`;
+  }
+
+  /* A colour is chosen from what there is rather than typed. There are two
+   * lists and they mean different things: the six the card paints by itself,
+   * which is what "leave it alone" already does, and Home Assistant's palette,
+   * which is every other colour on the dashboard.
+   *
+   * Anything else - a hex, a var(), a colour written on the YAML tab - is kept
+   * as an option of its own rather than being silently replaced by the first
+   * name in the list. The card takes those; this form does not offer them,
+   * because a text box that accepts four shapes of value and refuses a fifth
+   * is a worse way to ask than a list.
+   *
+   * The swatch is filled from the card's own table, over the same engine the
+   * match counts come from. Without the card there is no table to read and no
+   * swatch - the same failure, in the same place, as a count that cannot be
+   * computed. */
+  _colourHtml(path, current, hint, d) {
+    const set = typeof current === "string" ? current.trim() : "";
+    const named = set.toLowerCase().replace(/[\s_]+/g, "-");
+    const known = CARD_COLOURS.some(([k]) => k === named) ||
+      PALETTE.indexOf(named) !== -1;
+    /* Nothing chosen is not nothing drawn: the icon takes the severity's
+     * colour, so that is what the swatch shows. */
+    const swatch = this._colourCss(set || d.severity || DEFAULT_SEVERITY);
+    const opt = (value, label, on) =>
+      `<option value="${esc(value)}"${on ? " selected" : ""}>${esc(label)}</option>`;
+    return `<div class="colourrow">
+        <span class="swatch"${swatch ? ` style="background:${esc(swatch)}"` : ""}
+              aria-hidden="true"></span>
+        <select data-set="${path}">
+          ${opt("", hint, !set)}
+          <optgroup label="What the card paints">
+            ${CARD_COLOURS.map(([k, label]) => opt(k, label, named === k)).join("")}
+          </optgroup>
+          <optgroup label="Home Assistant's palette">
+            ${PALETTE.map((k) => opt(k, humanise(k), named === k)).join("")}
+          </optgroup>
+          ${set && !known
+            ? `<optgroup label="Written by hand">${opt(set, set, true)}</optgroup>`
+            : ""}
+        </select>
+      </div>`;
+  }
+
+  /* One written colour as CSS, asked of the card rather than answered here.
+   * A second table would be a table that drifts, and the one it drifted from
+   * is the one actually painting the rows. */
+  _colourCss(value) {
+    const engine = this._engine;
+    if (!engine || !engine.iconColorCss) return "";
+    return engine.iconColorCss(value) || "";
   }
 
   /* Conditions, as rows.
@@ -2562,6 +2651,11 @@ it are underneath it">Grouped</button>
     } else if (path === "severity") {
       if (value) d.severity = value; else delete d.severity;
       structural = true;
+    } else if (path === "icon_color") {
+      if (value) d.icon_color = value; else delete d.icon_color;
+      /* The swatch beside the select is part of the field, and so is the one
+       * on an empty Icon colour, which shows whatever Severity is set to. */
+      structural = true;
     } else if (path === "group") {
       if (value) d.group = value; else delete d.group;
       structural = true; // the wording slots depend on it
@@ -2587,6 +2681,7 @@ it are underneath it">Grouped</button>
       } else {
         const slot = d[head] && typeof d[head] === "object" ? d[head] : (d[head] = {});
         if (value) slot[tail] = value; else delete slot[tail];
+        if (head === "icon_color") structural = true; // its swatch, again
       }
     } else if (value === "" || value == null) {
       delete d[path];
@@ -3114,6 +3209,25 @@ textarea.yaml {
   border: 1px solid var(--divider-color, rgba(127,127,127,.3));
   color: var(--secondary-text-color); }
 .chipbtn.on { color: var(--primary-text-color); border-color: currentColor; }
+
+/* A colour and the name of it. The dot is what the eye reads; the name is what
+   it is called when it has to be said out loud.
+
+   The dot sits inside the select rather than beside it, and out of the flow.
+   Beside it, as a flex item, it was the first thing on the line and therefore
+   what the row offered as its baseline - and an empty span's baseline is its
+   bottom edge, so the label opposite sat 6px high, the worst on the form. Out
+   of the flow there is only the select left to align to, which is what every
+   other picker here aligns to. */
+.colourrow { position: relative; }
+.colourrow select { width: 100%; box-sizing: border-box; padding-left: 30px; }
+.swatch {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--secondary-text-color);
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,.45);
+  pointer-events: none;
+}
 
 .pair { display: grid; gap: 6px; }
 /* Wide enough for "inside a group" on one line: the labels are the only thing

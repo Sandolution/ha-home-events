@@ -290,6 +290,7 @@ appended, so that list arranges sections rather than registering them.
 | `time_mode` | `since`, `until`, `ago` or `remaining` — one word, or one per kind of row when the event groups. On a grouped row it also decides *which* of the group's instants is shown — see below. |
 | `show_time` | Whether the row carries a time at all. |
 | `title` `detail` `status` `icon` | How the row reads. See below. |
+| `icon_color` | What the icon is coloured, instead of what its severity would have coloured it. See below. |
 | `enabled` | `false` keeps the event in the library and draws it on no card. |
 
 ### include and exclude
@@ -432,11 +433,44 @@ A domain with its own renderer keeps its icon — (2) beats (4) — because thos
 seven were written to say something core does not. Everything else, which is
 most of a house, now matches the rest of the frontend.
 
+### What colour the icon is
+
+Colour on this card means urgency: `severity` decides it, an alert tints its
+whole row, and climate keeps its own heat and cold because which way the house
+is going is not a degree of urgency. `icon_color` overrides that for one
+event's icon — and only the icon. The status word and the alert tint still
+answer to `severity`, because those are the scan the list exists for.
+
+Three kinds of value:
+
+| | |
+|---|---|
+| `alert` `attention` `active` `info` `heat` `cool` | the six the card paints by itself, said out loud — `active` is the green a running washer already wears |
+| a Home Assistant palette name | `red`, `amber`, `deep-purple`, `blue-grey`, and the rest, spelled the way the tile card spells them — `primary`, `accent` and `disabled` too |
+| CSS | `#ff8800`, `rgb(…)`, `hsl(…)`, `color-mix(…)`, `var(--my-own-colour)` |
+
+```yaml
+plants:
+  include: {labels: [Plant]}
+  conditions: [{condition: numeric_state, below: 30}]
+  icon_color: light-green
+```
+
+A palette name resolves to the theme's variable rather than to a hex, so it
+follows the theme instead of being frozen at whatever it looked like the day it
+was written. A theme that defines none of them leaves the icon the colour it
+already had — an undefined `var()` invalidates the declaration and the row's
+own colour stands.
+
+A bare word that is not one of the names is refused rather than accepted:
+CSS has 148 colour keywords, and a typo among them is an icon that quietly
+keeps the colour it had, which is the hardest kind of mistake to find.
+
 ### Three kinds of row, three wordings
 
 Grouping draws three different rows, and they are read in three different
-places. So `title`, `detail`, `status`, `icon` and `time_mode` may each be
-worded once per kind:
+places. So `title`, `detail`, `status`, `icon`, `icon_color` and `time_mode`
+may each be set once per kind:
 
 | key | the row it words |
 |---|---|
@@ -445,10 +479,11 @@ worded once per kind:
 | `many` | **the group's own row**, which counts rather than names |
 
 ```yaml
-title:     {one: Ventilation, each: "{area}", many: Ventilation}
-detail:    {one: "{area}",    each: "",       many: Multiple rooms}
-icon:      {one: "mdi:fan",   many: "mdi:fan-speed-3"}
-time_mode: {one: remaining,   many: remaining}
+title:      {one: Ventilation, each: "{area}", many: Ventilation}
+detail:     {one: "{area}",    each: "",       many: Multiple rooms}
+icon:       {one: "mdi:fan",   many: "mdi:fan-speed-3"}
+icon_color: {one: active,      many: cyan}
+time_mode:  {one: remaining,   many: remaining}
 ```
 
 That reads *Ventilation · Bath Room* when one fan is running, and *Ventilation

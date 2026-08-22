@@ -17,12 +17,14 @@ have been right, without being read as the tail of some other sentence.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # home-event-card.js: EVENT_KEYS
 EVENT_KEYS = [
     "enabled", "category", "group", "include", "exclude", "conditions",
     "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
+    "icon_color",
 ]
 # home-event-card.js: FILTER_KEYS and FILTER_OPTS
 FILTER_KEYS = [
@@ -31,7 +33,8 @@ FILTER_KEYS = [
 ]
 FILTER_OPTS = ["match"]
 # home-event-card.js: PLURAL_KEYS
-PLURAL_KEYS = ["title", "detail", "status", "icon", "time_mode"]
+PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
+               "time_mode"]
 # home-event-card.js: WORDING_KEYS. Grouping makes three kinds of row - a
 # single thing on its own, a member of an open group, and the group itself -
 # and they are read in three places, so each may be worded on its own.
@@ -39,6 +42,34 @@ WORDING_KEYS = ["one", "each", "many"]
 # home-event-card.js: SEVERITIES, TIME_MODES, GROUP_MODES
 SEVERITIES = ["alert", "attention", "active", "info"]
 TIME_MODES = ["since", "until", "ago", "remaining"]
+# home-event-card.js: ICON_COLORS and PALETTE. The six the card paints by
+# itself - four severities and climate's two - then Home Assistant's own
+# palette, spelled the way the tile card spells it. Anything else has to look
+# like a value CSS takes, because it ends up inside a style attribute.
+TONES = ["heat", "cool"]
+PALETTE = [
+    "primary", "accent", "disabled",
+    "red", "pink", "purple", "deep-purple", "indigo", "blue", "light-blue",
+    "cyan", "teal", "green", "light-green", "lime", "yellow", "amber", "orange",
+    "deep-orange", "brown", "light-grey", "grey", "dark-grey", "blue-grey",
+    "black", "white",
+]
+ICON_COLOR_NAMES = SEVERITIES + TONES + PALETTE
+# home-event-card.js: CSS_COLOR
+CSS_COLOR = re.compile(
+    r"""^(\#[0-9a-f]{3,8}|(?:rgba?|hsla?|color-mix|var)\([^;{}<>"'\\]*\))$""",
+    re.I,
+)
+
+
+def icon_color_ok(value: Any) -> bool:
+    """Would the card make a colour of this?"""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    written = value.strip()
+    if re.sub(r"[\s_]+", "-", written.lower()) in ICON_COLOR_NAMES:
+        return True
+    return bool(CSS_COLOR.match(written))
 # home-event-card.js: SORT_MODES — how a section orders the rows inside it.
 SORT_MODES = ["recent", "duration", "name"]
 GROUP_MODES = [False, True, "area", "all"]
@@ -61,12 +92,13 @@ CONDITION_KEYS = {
 WRITE_ORDER = [
     "include", "exclude", "conditions",
     "category", "group", "severity", "time_mode", "show_time",
-    "title", "detail", "status", "icon",
+    "title", "detail", "status", "icon", "icon_color",
     "enabled",
 ]
 
 BOOL_KEYS = ["enabled", "show_time"]
-TEXT_KEYS = ["category", "title", "detail", "status", "icon", "severity", "time_mode"]
+TEXT_KEYS = ["category", "title", "detail", "status", "icon", "icon_color",
+             "severity", "time_mode"]
 
 
 class InvalidLibrary(Exception):
@@ -196,6 +228,22 @@ def _validate_event(name: str, event: Any) -> None:
                       + ", ".join(unknown) + ".")
             continue
         _fail(f'Option "{key}" on {where} is text, but it is {_kind(value)}.')
+
+    # A colour, checked against what CSS will do with it rather than against a
+    # list of four words. An icon that quietly kept the colour it already had
+    # is the hardest kind of typo to find, so a name that is not a name is
+    # refused here, before it is written.
+    colours = event.get("icon_color")
+    for value in (colours.values() if _is_map(colours) else [colours]):
+        if value is None or value == "":
+            continue
+        if not icon_color_ok(value):
+            _fail(f"Icon colour {value!r} on {where} is not a colour. Use one "
+                  "of " + ", ".join(SEVERITIES + TONES) + " - the colours the "
+                  "card paints by itself - or a Home Assistant palette name "
+                  "(" + ", ".join(PALETTE[3:9]) + ", ...), or a value CSS "
+                  "takes: #rrggbb, rgb(...), hsl(...), color-mix(...) or "
+                  "var(--your-variable).")
 
     # A word per kind of row, like the wordings, so a group counting down to
     # its last end can be said differently from the timers inside it. An empty
