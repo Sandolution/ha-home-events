@@ -34,11 +34,9 @@ That is a complete, working card. Everything below is optional.
 |---|---|---|
 | `group_by` | `"category"` | `category`, `area`, `severity` or `none` — what the sections are. |
 | `sort` | `"recent"` | `recent`, `duration` or `name`. Overrides whatever the library says; leave it out to follow the library. |
-| `max` | `14` | Hard cap on rows. The rest become a "+n more" line, which is more honest than a scrollbar on a wall tablet where nobody scrolls. |
-| `max_per_section` | `0` | Rows a section shows before it overflows. `0` leaves sections uncapped. A global cap alone starves: fifteen appliance rows push every other section off the card, and the ones that vanish are the ones you were not thinking about. |
-| `overflow` | `"scroll"` | What happens past that limit — `scroll` keeps them reachable, `hide` drops them and reports a count. Only `hide` writes a "+n more" line: a scrolling section still has every row it had. |
+| `max` | `14` | How many rows the card draws in total — shared out between the sections, not sliced off the end. See below. |
+| `max_per_section` | `0` | A hard limit for one section, applied before the budget is shared. `0` leaves it to `max`. |
 | `hide_when_empty` | `false` | A card that vanishes leaves a hole in a sections layout, and a hole reads as a broken card rather than as a quiet house. |
-| `max_height` | `null` | A ceiling for the whole card, past which it scrolls. A bare number is pixels. `max` caps by row count, which is the unit to use when you know what a row is worth; this is the one for when what you know is how much wall you have. |
 
 | `collapsible` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
 | `promote_alerts` | `"alerts"` | A section id, or `false` — anything red is filed there rather than under its own section. Only applies to `group_by: category`. |
@@ -46,28 +44,59 @@ That is a complete, working card. Everything below is optional.
 | `tidy_names` | `false` | Let the card rewrite friendly names. Off. See below. |
 | `text` | see below | Every string the card writes itself. |
 
-### A capped section, and what it looks like
+### The row budget
 
-A section held to `max_per_section` in `scroll` mode keeps every row it had —
-the height is what was capped, not the list. The row at the edge is deliberately
-half-visible and fades out: that sliver is what says "there is more this way",
-and it reads from across a room where a scrollbar does not. Both edges do it,
-and each fade goes when its own end of the list is reached — the top one once
-you scroll away from the first row, the bottom one once you arrive at the last.
-A section short enough not to scroll is at both ends at once and fades neither.
+`max` is the size of the card, in the only unit it has: rows.
 
-There is no "+n more" under a scrolling section. The number would be naming a row
-the card is already showing. `overflow: hide` is the mode that reports a count,
-because that is the mode where rows are actually missing.
+It is **shared out, not sliced off the end**. Every section keeps at least one
+row; the rest of the budget goes a row at a time to whichever section has the
+fewest so far, so the line rises evenly and only the sections sticking out of
+it get cut. What a section had to leave out is counted underneath it, where the
+number is about a list you can see.
 
-**Neither height ceiling applies under 600px wide.** `max_height` and a capped
-section both turn part of the page into a scroll container, and on a touch screen
-a scroll container is where the page stops scrolling — the gesture latches to
-whatever is under the finger, and with a capped section under most of the card
-there is nowhere left to start a swipe. On a tablet on a wall that trade is the
-whole point: the card holds still, and a wheel or a scrollbar reaches the rest.
-On a handset the page scrolls perfectly well by itself, so the card is simply as
-tall as it is. `max` still caps the total rows either way.
+With sixteen rows going and `max: 12`:
+
+| section | has | shows | |
+|---|---|---|---|
+| Needs attention | 1 | 1 | never trimmed |
+| Generic | 2 | 2 | under the line |
+| Appliances | 3 | 3 | under the line |
+| HVAC | 3 | 3 | under the line |
+| Lighting | 7 | 3 | **+4 more** |
+
+Slicing the sorted list instead — which is what this used to do — puts whatever
+sorts last off the card entirely, and the sections that vanish are the ones you
+were not thinking about. That is the reason to have a card like this at all, so
+it is the one thing the cap must not do.
+
+**Alerts are never trimmed.** A section called *Needs attention* that hides some
+of what needs attention is worse than no section. Those rows come off the top of
+the budget and the rest share what is left.
+
+`max_per_section` is a hard limit for one particular list, applied before the
+budget is shared — for when a section is worth exactly three rows to you however
+quiet the rest of the house is. Most configs do not need it. Alerts ignore it,
+for the same reason they ignore the budget.
+
+If the budget is too small to give every section even one row, the later
+sections go — the order is the one you arranged in the Event Manager, so the
+sections you put first are the ones that survive a squeeze.
+
+### Nothing here scrolls
+
+There is no pixel ceiling and no scrolling region, and that is a rule rather
+than an omission.
+
+The card had both: `max_height` bounded the whole card, and a capped section
+showed *n* rows and scrolled for the rest. Both are fine with a mouse and both
+are a trap under a finger — a touch gesture latches onto whatever scrollable
+thing is beneath it, so a card covering most of a screen is a part of the page
+you cannot scroll past. Withdrawing them under 600px fixed a phone and left
+every tablet, and a tablet held in the hand is the same finger.
+
+So the card is exactly as tall as the rows it draws, and `max` decides how many
+that is. Naming `max_height` or `overflow` now says so rather than being
+ignored.
 
 ### Names and locations
 
@@ -161,9 +190,7 @@ a silently accepted typo is a card in two languages.
 | `degree` | `°` | |
 | `arrow` | `→` | between a thermostat's current and target |
 | `hold` | `Hold for this group's own controls` | on a group row that has an entity behind it |
-| `more` | `+{n} more` | a section's own overflow line |
-| `more_events` | `+{n} more events` | the whole card's overflow line |
-| `more_event` | `+{n} more event` | the same, when there is one |
+| `more` | `+{n} more` | what a section had to leave out |
 
 Section headings for the four severities, used when `group_by: severity`:
 
