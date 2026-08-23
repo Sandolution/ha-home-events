@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-22a";
+const PANEL_BUILD = "2026-08-22b";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -310,7 +310,9 @@ const HELP = {
     "than being frozen at whatever it looked like today. Only the icon " +
     "changes: the status word and an alert's tinted row still answer to " +
     "Severity, because those are the scan the list is for. This is for " +
-    "telling two quiet events apart, not a second severity scale.",
+    "telling two quiet events apart, not a second severity scale.\n\n" +
+    "The dot beside this event in the list is that icon, shrunk - so it " +
+    "follows this rather than Severity once something is chosen here.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
     "count up from the last change, until and remaining count down to what is " +
     "next.\n\n" +
@@ -359,6 +361,21 @@ const HELP = {
     "the card's half.",
 };
 const tip = (key) => (HELP[key] ? ` title="${esc(HELP[key])}"` : "");
+
+/* Which of an event's colours stands for the event.
+ *
+ * One value is the answer. Three are three answers - a group's own row, the
+ * rows inside it, and a row on its own - and a list has one dot, so it takes
+ * them in the order the form asks for them and uses the first that says
+ * anything. `one` first because it is the row drawn among strangers, which is
+ * the row a person pictures when they picture this event. */
+const writtenColour = (event) => {
+  const value = (event || {}).icon_color;
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  for (const k of WORDINGS.map(([key]) => key)) if (value[k]) return value[k];
+  return "";
+};
 
 const humanise = (s) =>
   String(s || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -768,9 +785,15 @@ class HomeEventsPanel extends HTMLElement {
             ? `${e.conditions.length} condition${e.conditions.length > 1 ? "s" : ""}`
             : "any state",
         ].filter(Boolean).join(" · ");
+        /* The dot is the row's icon, shrunk to the one thing a list has room
+           for. So an event that says what colour its icon is says what colour
+           this is too - severity is only what decides it when nothing else
+           does, here exactly as on the card. */
+        const paint = this._colourCss(writtenColour(e));
         return `<div class="row${sel ? " sel" : ""}${off ? " off" : ""}" ` +
           `data-event="${esc(name)}" tabindex="0">` +
-          `<span class="dot sev-${esc(e.severity || "info")}"></span>` +
+          `<span class="dot sev-${esc(e.severity || "info")}"` +
+          `${paint ? ` style="background:${esc(paint)}"` : ""}></span>` +
           `<span class="nm">${esc(name)}</span>` +
           `<span class="sub">${esc(what)}</span></div>`;
       }).join("");
