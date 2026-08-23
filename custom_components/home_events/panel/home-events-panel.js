@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-22b";
+const PANEL_BUILD = "2026-08-23d";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -729,7 +729,7 @@ class HomeEventsPanel extends HTMLElement {
     const $ = (s) => this.shadowRoot.querySelector(s);
     this._el = {
       list: $(".list"), name: $(".name"), pane: $(".pane"), msg: $(".msg"),
-      del: $('[data-act="delete"]'), tabs: $(".tabs"),
+      app: $(".app"), del: $('[data-act="delete"]'), tabs: $(".tabs"),
       save: $('[data-act="save"]'), head: $(".ed-head"),
     };
 
@@ -1170,6 +1170,10 @@ class HomeEventsPanel extends HTMLElement {
 
   _renderPane(text) {
     this._pending = [];
+    /* Which of the five things the editor is showing, written where the
+     * layout can read it: a phone has room for one column, and the column is
+     * the list or the event depending on this. */
+    this._el.app.dataset.mode = this._mode;
     /* Which drawing this is. Controls made here carry the number and refuse to
      * write once it has moved on - see _pickerFor. */
     this._gen = (this._gen || 0) + 1;
@@ -2784,7 +2788,20 @@ it are underneath it">Grouped</button>
       const msg = {
         type: "home_events/save_event", name, yaml: text,
       };
-      if (this._renamedFrom && this._renamedFrom !== name) msg.rename_from = this._renamedFrom;
+      /* Always, not only when it changed: it is what this write is about, and
+       * the integration reads anything *else* carrying this name as a
+       * different event that would be lost. An event being written for the
+       * first time has no before, and says so by leaving it out. */
+      if (this._renamedFrom) msg.rename_from = this._renamedFrom;
+      /* Which is a question, asked here where the names are, rather than an
+       * error from the far end after the typing is done. Saying no leaves the
+       * editor exactly as it was, with the name still in the box. */
+      if (name !== this._renamedFrom && this._events()[name]) {
+        if (!ask(`There is already an event called "${name}". Replace it?\n\n` +
+                 "Everything it says - what it covers, when it applies and how " +
+                 "it reads - is lost, and there is no undo.")) return;
+        msg.replace = true;
+      }
       /* A section named while writing this event exists once the event does,
        * and not before. It goes first: an event landing in a section the
        * library has never heard of would read by its id until the next write. */
@@ -2929,7 +2946,8 @@ main {
   grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
   gap: 16px; padding: 16px; box-sizing: border-box;
 }
-@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+}
 
 .side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 /* The way back, beside the way forward. Square and quiet: it is the same
@@ -3138,6 +3156,12 @@ textarea.yaml {
   flex: 1; text-align: left; font-size: 14px; padding: 6px 10px;
   border: 1px solid var(--divider-color, rgba(127,127,127,.3));
   border-radius: 8px; color: inherit; background: transparent;
+  /* An entity id is one long unbreakable word, and a flex item will not
+     shrink below the width of what is in it unless it is told that it may.
+     Untold, the button grew past the card, took the × with it and made the
+     whole page 485px wide on a 390px phone - a sideways scroll to reach a
+     control that was on the screen a moment ago. */
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .crit .val:hover { border-color: var(--primary-color); }
 /* Where a picker goes to be opened without being seen.
@@ -3378,6 +3402,48 @@ textarea.yaml {
   color: var(--secondary-text-color); white-space: pre-wrap; }
 .msg.bad { color: var(--error-color, #d8574a); }
 .msg.good { color: var(--success-color, #5cb87f); }
+
+/* ---- one column ----
+   Below this width the panel stops being two panes in a window and becomes a
+   page. It was two panes at any size, which on a phone meant a 314px list over
+   a 330px form on an 844px screen: a finger on the form scrolled the form, the
+   page under it did not move, and four screens of settings came through a
+   third of a screen. That is the trap the card was rebuilt to get out of, and
+   it was still here in the thing that edits the card.
+
+   So: the page scrolls, nothing inside it does, and the column shows one thing
+   at a time - the list until an event is open, the event after that. The way
+   back is the title in the bar, which is already a button and now stays put. */
+@media (max-width: 860px) {
+  :host { height: auto; min-height: 100vh; }
+  .app { height: auto; min-height: 100vh; }
+  .bar { position: sticky; top: 0; z-index: 12; gap: 8px; padding: 0 12px; }
+  /* The build stamp was breaking across three lines beside a title that had
+     room for one - it is four hyphenated tokens in a 35px box. It is the
+     first thing anybody reads when a phone seems to be running yesterday's
+     panel, so it keeps its place and the title gives up the width instead. */
+  button.title { font-size: 17px; gap: 6px; }
+  .build { white-space: nowrap; }
+  main { display: block; }
+  .side { margin-bottom: 16px; }
+  .list { overflow: visible; flex: none; }
+  .editor { overflow: visible; }
+  .pane { overflow: visible; flex: none; }
+  .app:not([data-mode="home"]) .side { display: none; }
+  /* Sticky against the page now rather than against the pane, so it has to
+     clear the bar which is sticky against the same page. */
+  .subtabs { top: var(--bar-h); }
+  /* The head runs out of room at about 500px, and did it silently: the name
+     box held its width, the tabs shrank until YAML was clipped away, and
+     Delete came to rest on top of where YAML had been - so reaching for the
+     YAML tab opened the delete confirmation. It wraps now, with the name on a
+     line of its own. */
+  .ed-head { flex-wrap: wrap; }
+  .name { width: 100%; box-sizing: border-box; }
+  .ed-head .grow { display: none; }
+  /* It was as tall as the pane it stretched inside, and the pane no longer
+     stretches. */
+  textarea.yaml { height: auto; min-height: 60vh; }
 `;
 
 if (!customElements.get("home-events-panel")) {

@@ -122,6 +122,7 @@ def ws_export(hass: HomeAssistant, connection, msg: dict) -> None:
     vol.Required("name"): str,
     vol.Required("yaml"): str,
     vol.Optional("rename_from"): str,
+    vol.Optional("replace"): bool,
 })
 @websocket_api.async_response
 async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -130,6 +131,11 @@ async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
     The whole library is validated afterwards, not just the event: a rename
     that orphans a category, or an event that now collides with another name,
     is a fact about the library rather than about the lines just typed.
+
+    `rename_from` is the event this write is about - the same name when
+    nothing was renamed, and absent when the event is new. Anything else
+    already carrying this name is therefore a *different* event, and writing
+    over it needs `replace`, which is the panel saying somebody was asked.
     """
     if (store := _store(hass, connection, msg)) is None:
         return
@@ -153,9 +159,23 @@ async def ws_save_event(hass: HomeAssistant, connection, msg: dict) -> None:
                               f"{type(event).__name__}.")
         return
 
+    # Losing an event is a thing to be asked about, not a thing to find out
+    # about later. Renaming one onto the name of another used to remove the
+    # other silently, and so did saving a new event under a name already in
+    # use; there is no undo, no history in the store, and `.storage` is not in
+    # anybody's git - so the copy that was overwritten was simply gone.
+    old = msg.get("rename_from")
+    if name in library["events"] and name != old and not msg.get("replace"):
+        connection.send_error(
+            msg["id"], ERR_INVALID,
+            f'There is already an event called "{name}". Saving this one '
+            "under that name would replace it, and a replaced event is gone "
+            "for good - rename this one, or export the library first if the "
+            "other is worth keeping.")
+        return
+
     # Rebuilt rather than mutated, so a rename keeps its place in the list
     # instead of moving to the end: the order is the author's.
-    old = msg.get("rename_from")
     events: dict[str, Any] = {}
     replaced = False
     for key, value in library["events"].items():
