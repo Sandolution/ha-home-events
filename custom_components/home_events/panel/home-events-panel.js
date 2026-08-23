@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-23d";
+const PANEL_BUILD = "2026-08-23e";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -344,6 +344,10 @@ const HELP = {
   library: "The whole library as YAML - sections, defaults and every event. " +
     "Paste one in to replace it.",
   newevent: "Start an event. It covers nothing until you say what it covers.",
+  duplicate: "Make another event from this one - everything it covers, when it " +
+    "applies and how it reads, under a new name.\n\n" +
+    "The copy is the event as it was last saved, and it is not written down " +
+    "until you save it, so one thought better of leaves nothing behind.",
   "tab-what": "Which entities this event is about. Every event needs at " +
     "least one criterion here - it is the only question with no sensible " +
     "default, because only you know what the event is for.",
@@ -717,6 +721,8 @@ class HomeEventsPanel extends HTMLElement {
                 <button data-act="tab-yaml" class="tab">YAML</button>
               </div>
               <span class="grow"></span>
+              <button class="ghost" data-act="duplicate"
+                      title="${esc(HELP.duplicate)}">Duplicate</button>
               <button class="ghost danger" data-act="delete">Delete</button>
               <button class="primary" data-act="save">Save</button>
             </div>
@@ -730,6 +736,7 @@ class HomeEventsPanel extends HTMLElement {
     this._el = {
       list: $(".list"), name: $(".name"), pane: $(".pane"), msg: $(".msg"),
       app: $(".app"), del: $('[data-act="delete"]'), tabs: $(".tabs"),
+      dup: $('[data-act="duplicate"]'),
       save: $('[data-act="save"]'), head: $(".ed-head"),
     };
 
@@ -883,7 +890,8 @@ class HomeEventsPanel extends HTMLElement {
         <li><b>The list on the left</b> is every event, under the section it
           files rows into. Click one to edit it.</li>
         <li><b>New event</b> starts an empty one. It is not written down until
-          it is saved and named.</li>
+          it is saved and named. <b>Duplicate</b>, on an event, starts one that
+          already says everything that one says.</li>
         <li><b>Sections</b> is the order the headings come in, what each is
           called, and how the rows inside one are sorted.</li>
         <li><b>Whole library</b> is all of it as YAML — how it leaves this
@@ -943,6 +951,7 @@ class HomeEventsPanel extends HTMLElement {
     this._el.name.disabled = false;
     this._el.head.style.display = "";
     this._el.del.style.display = "";
+    this._el.dup.style.display = "";
     this._el.tabs.style.display = "";
     this._say("");
     this._renderList();
@@ -985,11 +994,74 @@ class HomeEventsPanel extends HTMLElement {
     this._el.name.disabled = false;
     this._el.head.style.display = "";
     this._el.del.style.display = "none";
+    this._el.dup.style.display = "none";
     this._el.tabs.style.display = "";
     this._say("Name it, then save. The name is what a card refers to.");
     this._renderList();
     this._renderPane();
     this._el.name.focus();
+  }
+
+  /* Another event that starts where this one got to.
+   *
+   * Most events in a library are near-siblings - the same filter with a
+   * different state, the same domain in a different section - and typing the
+   * second one out again is the slow way to say "like that, but". So the copy
+   * arrives whole and unsaved, named after the one it came from, with the name
+   * selected because renaming it is the first thing anybody does.
+   *
+   * It copies the event as last saved rather than what is on screen. Both were
+   * defensible; this one is the one that can be described in a sentence, and
+   * it is the same thing opening another event does with unsaved changes - the
+   * question is even the same question.
+   *
+   * Nothing is written. A duplicate is a draft like any other, so one thought
+   * better of costs a click and leaves no trace, and the library cannot fill
+   * up with copies nobody meant to keep. */
+  async _duplicate() {
+    const from = this._selected;
+    if (!from) return;
+    if (!(await this._confirmDiscard())) return;
+    const source = this._events()[from];
+    if (!source) return;
+    this._selected = null;
+    /* No before: this event has never been written, so there is nothing for a
+     * save to rename or replace - which is exactly what the far end needs to
+     * be told, or it would read the copy as a write over its own source. */
+    this._renamedFrom = null;
+    this._draft = this._formShape(clone(source));
+    this._mode = "visual";
+    /* `_sub` is deliberately left where it was. A duplicate is made in the
+     * middle of a thought about one of the three questions, and being put back
+     * on the first one is being made to find your place again. */
+    this._setDirty(true);
+    this._editing = null;
+    this._newcat = false;
+    this._newCategory = null;
+    this._el.name.value = this._copyName(from);
+    this._el.name.disabled = false;
+    this._el.head.style.display = "";
+    this._el.del.style.display = "none";
+    this._el.dup.style.display = "none";
+    this._el.tabs.style.display = "";
+    this._say(`A copy of "${from}", saved to nothing yet.`);
+    this._renderList();
+    this._renderPane();
+    this._el.name.focus();
+    this._el.name.select();
+  }
+
+  /* What to call it, before anybody has said.
+   *
+   * The number goes on the word rather than on the name, so a copy of a copy
+   * is "Lighting copy 2" rather than "Lighting copy copy" - and a name that
+   * ends in a number of its own keeps it. */
+  _copyName(name) {
+    const taken = this._events();
+    const base = String(name).replace(/ copy(?: \d+)?$/i, "");
+    let candidate = `${base} copy`;
+    for (let n = 2; taken[candidate]; n++) candidate = `${base} copy ${n}`;
+    return candidate;
   }
 
   /* The sections, which are the other half of how a card reads: which order
@@ -1028,6 +1100,7 @@ class HomeEventsPanel extends HTMLElement {
     this._el.name.disabled = true;
     this._el.head.style.display = "";
     this._el.del.style.display = "none";
+    this._el.dup.style.display = "none";
     this._el.tabs.style.display = "none";
     this._setDirty(false);
     this._renderPane();
@@ -1120,6 +1193,7 @@ class HomeEventsPanel extends HTMLElement {
       this._el.name.disabled = true;
       this._el.head.style.display = "";
       this._el.del.style.display = "none";
+      this._el.dup.style.display = "none";
       this._el.tabs.style.display = "none";
       this._setDirty(false);
       this._renderPane(res.yaml);
@@ -2447,6 +2521,7 @@ it are underneath it">Grouped</button>
       case "delete": return this._delete();
       case "home": return this._openHome();
       case "new": return this._newEvent();
+      case "duplicate": return this._duplicate();
       case "library": return this._openLibrary();
       case "sections": return this._openSections();
       case "editcat": return this._openSections(el.dataset.cat);
@@ -2811,6 +2886,7 @@ it are underneath it">Grouped</button>
       this._renamedFrom = name;
         this._setDirty(false);
       this._el.del.style.display = "";
+      this._el.dup.style.display = "";
       await this._reload();
       if (this._mode === "yaml") {
         this._draft = this._formShape(clone(this._events()[name]) || {});
