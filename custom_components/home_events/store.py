@@ -22,8 +22,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, SIGNAL_UPDATED, STORAGE_KEY, STORAGE_VERSION
-from .schema import validate_library
+from .const import (DOMAIN, SCHEMA_VERSION, SIGNAL_UPDATED, STORAGE_KEY,
+                    STORAGE_VERSION)
+from .schema import InvalidLibrary, validate_library
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,7 +84,23 @@ class HomeEventsStore:
         return self._data["library"]
 
     async def async_save(self, data: dict) -> dict:
-        """Validate, write, and tell everyone looking. Raises InvalidLibrary."""
+        """Validate, write, and tell everyone looking. Raises InvalidLibrary.
+
+        A library may arrive carrying the schema version it was written
+        against - everything this integration hands out is stamped with one,
+        so anything read and saved again brings it back. The schema takes it
+        and drops it; the only thing worth refusing is a number from the
+        future, which would mean keeping the keys this version knows and
+        losing the rest without a word.
+        """
+        stamp = data.get("schema_version")
+        if isinstance(stamp, int) and not isinstance(stamp, bool) \
+                and stamp > SCHEMA_VERSION:
+            raise InvalidLibrary(
+                f"This library was written against schema version {stamp}, and "
+                f"this version of the Events integration understands version "
+                f"{SCHEMA_VERSION}. Update the integration before importing it "
+                "- anything newer in it would be dropped without a word.")
         clean = validate_library(data)
         self._data["library"] = clean
         await self._store.async_save(self._data)

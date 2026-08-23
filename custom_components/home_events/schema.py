@@ -273,11 +273,26 @@ def validate_library(data: Any) -> dict:
               f"{_kind(data)}.")
 
     unknown = [k for k in data
-               if k not in ("sort", "non_areas", "categories", "events")]
+               if k not in ("schema_version", "sort", "non_areas", "categories",
+                            "events")]
     if unknown:
         _fail("Unknown key(s) in the library: " + ", ".join(unknown)
               + '. A library holds "sort", "non_areas", "categories" and '
               '"events".')
+
+    # The number of the shape this was written against, which the integration
+    # stamps on every library it hands out. So it comes back on anything that
+    # was read and saved again - which used to be refused, making the library
+    # this API returns the one thing it would not accept. It is metadata about
+    # the shape rather than part of it, so it is taken and dropped rather than
+    # stored; whether *this* install understands the number is store.py's
+    # question, being the half that knows its own version.
+    stamp = data.get("schema_version")
+    if stamp is not None and (isinstance(stamp, bool)
+                              or not isinstance(stamp, int) or stamp < 1):
+        _fail(f'"schema_version" is the number of the shape a library was '
+              f"written against, so it is a whole number from 1 up, but this "
+              f"is {_kind(stamp)}.")
 
     # How the rows in a section read, for every section that does not say
     # otherwise. A card that states its own `sort` keeps it; this is what a

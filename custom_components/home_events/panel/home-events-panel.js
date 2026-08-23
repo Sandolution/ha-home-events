@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-23e";
+const PANEL_BUILD = "2026-08-23f";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -244,6 +244,12 @@ const FILTER_EXAMPLES = [
    "Gas | Consumption | Daily", "Daily of Gas | Consumption",
    "$1 and $2 are whatever the brackets caught"],
 ];
+
+/* A control whose face is a glyph has no name to be read out: "×" is what it
+ * looks like, not what it does. The tooltip already says what it does, so it
+ * says it twice - once for a pointer hovering, once for anything that cannot
+ * see the glyph. One string, so the two cannot drift. */
+const named = (what) => ` title="${esc(what)}" aria-label="${esc(what)}"`;
 
 const esc = (s) =>
   String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -692,7 +698,7 @@ class HomeEventsPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
       <div class="app">
         <header class="bar">
-          <button class="icon" data-act="menu" title="Sidebar">&#9776;</button>
+          <button class="icon" data-act="menu"${named("Sidebar")}>&#9776;</button>
           <button class="title" data-act="home" title="Back to the overview">Events<span
             class="build" title="The build this
             page is running. Home Assistant fetches a panel module once per
@@ -706,7 +712,7 @@ class HomeEventsPanel extends HTMLElement {
           <aside class="side">
             <div class="sidetop">
               <button class="icon square" data-act="home"
-                      title="The overview">&#8962;</button>
+                      ${named("The overview")}>&#8962;</button>
               <button class="primary grow" data-act="new"
                       title="${esc(HELP.newevent)}">New event</button>
             </div>
@@ -716,9 +722,11 @@ class HomeEventsPanel extends HTMLElement {
             <div class="ed-head">
               <input class="name" spellcheck="false" autocomplete="off"
                      placeholder="event_name">
-              <div class="tabs">
-                <button data-act="tab-visual" class="tab">Visual</button>
-                <button data-act="tab-yaml" class="tab">YAML</button>
+              <div class="tabs" role="tablist" aria-label="How to edit this event">
+                <button data-act="tab-visual" class="tab" role="tab"
+                        aria-selected="true" aria-controls="pane">Visual</button>
+                <button data-act="tab-yaml" class="tab" role="tab"
+                        aria-selected="false" aria-controls="pane">YAML</button>
               </div>
               <span class="grow"></span>
               <button class="ghost" data-act="duplicate"
@@ -726,8 +734,8 @@ class HomeEventsPanel extends HTMLElement {
               <button class="ghost danger" data-act="delete">Delete</button>
               <button class="primary" data-act="save">Save</button>
             </div>
-            <div class="pane"></div>
-            <div class="msg"></div>
+            <div class="pane" id="pane" role="tabpanel"></div>
+            <div class="msg" role="status"></div>
           </section>
         </main>
       </div>`;
@@ -747,6 +755,17 @@ class HomeEventsPanel extends HTMLElement {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         this._save();
+      }
+      /* A row in the list takes focus like a button and has to answer like
+       * one. It is a div because it is three pieces of text and a dot in a
+       * grid, which is a layout a <button> fights; the keys are the half of
+       * being a button that has to be written out by hand. */
+      if (e.key === "Enter" || e.key === " ") {
+        const row = e.target && e.target.closest && e.target.closest("[data-event]");
+        if (row) {
+          e.preventDefault();
+          this._openEvent(row.dataset.event);
+        }
       }
     });
     this._el.name.addEventListener("input", () => {
@@ -797,10 +816,16 @@ class HomeEventsPanel extends HTMLElement {
            this is too - severity is only what decides it when nothing else
            does, here exactly as on the card. */
         const paint = this._colourCss(writtenColour(e));
+        /* A focusable div is a button whatever it is called, and something
+           reading this page aloud has no other way to know that. The dot
+           beside it is a colour and colour alone, so what it means is said
+           in a word that only something reading aloud will reach. */
         return `<div class="row${sel ? " sel" : ""}${off ? " off" : ""}" ` +
-          `data-event="${esc(name)}" tabindex="0">` +
+          `data-event="${esc(name)}" tabindex="0" role="button"` +
+          `${sel ? ' aria-current="true"' : ""}>` +
           `<span class="dot sev-${esc(e.severity || "info")}"` +
-          `${paint ? ` style="background:${esc(paint)}"` : ""}></span>` +
+          `${paint ? ` style="background:${esc(paint)}"` : ""} aria-hidden="true"></span>` +
+          `<span class="sr">${esc(e.severity || "info")}${off ? ", not shown" : ""}</span>` +
           `<span class="nm">${esc(name)}</span>` +
           `<span class="sub">${esc(what)}</span></div>`;
       }).join("");
@@ -1128,12 +1153,12 @@ class HomeEventsPanel extends HTMLElement {
                 : this._defaultSort ? "Same as above" : "As the card says")}</option>`).join("")}
           </select>
           <span class="dim count-of">${used} ${used === 1 ? "event" : "events"}</span>
-          <button class="mv" data-act="secup" data-index="${i}" title="Move up"
+          <button class="mv" data-act="secup" data-index="${i}" ${named("Move up")}
                   ${i === 0 ? "disabled" : ""}>↑</button>
-          <button class="mv" data-act="secdown" data-index="${i}" title="Move down"
+          <button class="mv" data-act="secdown" data-index="${i}" ${named("Move down")}
                   ${i === this._sections.length - 1 ? "disabled" : ""}>↓</button>
           <button class="x row-x" data-act="secdel" data-index="${i}"
-                  title="Stop arranging this one">×</button>
+                  ${named("Stop arranging this one")}>×</button>
         </div>`;
     }).join("");
     return `<div class="fs">
@@ -1252,7 +1277,9 @@ class HomeEventsPanel extends HTMLElement {
      * write once it has moved on - see _pickerFor. */
     this._gen = (this._gen || 0) + 1;
     this.shadowRoot.querySelectorAll(".tab").forEach((t) => {
-      t.classList.toggle("on", t.dataset.act === `tab-${this._mode}`);
+      const on = t.dataset.act === `tab-${this._mode}`;
+      t.classList.toggle("on", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
     });
 
     if (this._mode === "home") {
@@ -1493,15 +1520,17 @@ class HomeEventsPanel extends HTMLElement {
     const tab = (id, label) => {
       const [note, cls] = NOTES[id];
       return `<button data-act="sub-${id}" class="subtab${sub === id ? " on" : ""}"` +
+        ` role="tab" aria-selected="${sub === id}" aria-controls="question"` +
         `${tip(`tab-${id}`)}><span class="subname">${esc(label)}</span>` +
         (note ? `<span class="subnote${cls}">${esc(note)}</span>` : "") +
         `</button>`;
     };
-    const tabs = `<div class="subtabs">${tab("what", "What")}` +
-      `${tab("when", "When")}${tab("how", "How")}</div>`;
+    const tabs = `<div class="subtabs" role="tablist" ` +
+      `aria-label="What this event covers, when, and how it reads">` +
+      `${tab("what", "What")}${tab("when", "When")}${tab("how", "How")}</div>`;
 
     if (sub === "when") {
-      return tabs + `<div class="fs">
+      return tabs + `<div class="fs" id="question" role="tabpanel">
          <div class="legend"${tip("conditions")}>When
            <span class="q">— and in which state?</span></div>
          ${this._conditionsHtml(d.conditions)}
@@ -1509,7 +1538,7 @@ class HomeEventsPanel extends HTMLElement {
        </div>`;
     }
     if (sub === "what") {
-      return tabs + `<div class="fs">
+      return tabs + `<div class="fs" id="question" role="tabpanel">
          <div class="legend">What <span class="q">— which entities does this cover?</span></div>
          ${this._filterHtml("include", d.include || {})}
          ${this._filterHtml("exclude", d.exclude || {})}
@@ -1519,7 +1548,7 @@ class HomeEventsPanel extends HTMLElement {
 
     return (
       tabs +
-      `<div class="fs">
+      `<div class="fs" id="question" role="tabpanel">
          <div class="legend">How <span class="q">— how should the row read?</span></div>
 
          <div class="field"><div class="label"${tip("enabled")}>Enabled</div><div>
@@ -1545,17 +1574,20 @@ class HomeEventsPanel extends HTMLElement {
          </div></div>
 
          <div class="field"><div class="label"${tip("severity")}>Severity</div>
-           <div class="sev">${SEVERITIES.map((s) =>
+           <div class="sev" role="radiogroup" aria-label="Severity">${SEVERITIES.map((s) =>
              `<button class="chipbtn sev-${esc(s.key)}` +
              `${(d.severity || DEFAULT_SEVERITY) === s.key ? " on" : ""}" ` +
+             `role="radio" aria-checked="${(d.severity || DEFAULT_SEVERITY) === s.key}" ` +
              `data-set="severity" data-value="${esc(s.key)}">` +
-             `<span class="dot sev-${esc(s.key)}"></span>${esc(s.label)}</button>`).join("")}
+             `<span class="dot sev-${esc(s.key)}" aria-hidden="true"></span>` +
+             `${esc(s.label)}</button>`).join("")}
            </div>
          </div>
 
          <div class="field"><div class="label"${tip("group")}>Group</div>
-           <div class="seg">${GROUPS.map((g) =>
-             `<button data-set="group" data-value="${esc(g.key || "")}"` +
+           <div class="seg" role="radiogroup" aria-label="Group">${GROUPS.map((g) =>
+             `<button data-set="group" data-value="${esc(g.key || "")}" role="radio"` +
+             ` aria-checked="${this._groupOf(d) === g.key}"` +
              `${this._groupOf(d) === g.key ? ' class="on"' : ""}>${esc(g.label)}</button>`).join("")}
            </div>
          </div>
@@ -1565,10 +1597,14 @@ class HomeEventsPanel extends HTMLElement {
          ${this._timeHtml(d, grouped)}
 
          <div class="field chiprow"><div class="label"${tip("preview")}>Reads as</div><div>
-           <div class="seg small previewseg">
-             <button data-act="prevone"${this._previewMany ? "" : ' class="on"'}
+           <div class="seg small previewseg" role="radiogroup" aria-label="Which row to show">
+             <button data-act="prevone" role="radio"
+                     aria-checked="${!this._previewMany}"
+                     ${this._previewMany ? "" : 'class="on"'}
                      title="How the row reads for a single thing, on its own">One</button>
-             <button data-act="prevmany"${this._previewMany ? ' class="on"' : ""}
+             <button data-act="prevmany" role="radio"
+                     aria-checked="${!!this._previewMany}"
+                     ${this._previewMany ? 'class="on"' : ""}
                      title="The group's own row, drawn open, so the rows inside
 it are underneath it">Grouped</button>
            </div>
@@ -1692,7 +1728,7 @@ it are underneath it">Grouped</button>
           <button class="val${set ? "" : " empty"}" data-act="editicon"
                   data-path="${path}">${esc(set ? current : "Choose an icon…")}</button>
           ${set ? `<button class="x row-x" data-act="clearicon"
-                  data-path="${path}" title="Remove">×</button>` : ""}
+                  data-path="${path}"${named("Remove")}>×</button>` : ""}
           ${open ? `<span class="pickhost" data-iconslot="${path}"></span>` : ""}
         </div>`;
     };
@@ -1851,14 +1887,14 @@ it are underneath it">Grouped</button>
      * move one is the same need the filter above has. A row on its own has
      * nowhere to go, so it gets no arrows. */
     const move = where && !where.alone
-      ? `<button class="mv" data-act="condup" data-path="${path}" title="Move up"
+      ? `<button class="mv" data-act="condup" data-path="${path}" ${named("Move up")}
                  ${where.first ? "disabled" : ""}>↑</button>
-         <button class="mv" data-act="conddown" data-path="${path}" title="Move down"
+         <button class="mv" data-act="conddown" data-path="${path}" ${named("Move down")}
                  ${where.last ? "disabled" : ""}>↓</button>`
       : "";
     const acts = `<span class="acts">${move}` +
-      `<button class="x row-x" data-act="delcond" data-path="${path}" ` +
-      `title="Remove this condition">×</button></span>`;
+      `<button class="x row-x" data-act="delcond" data-path="${path}"` +
+      `${named("Remove this condition")}>×</button></span>`;
 
     /* A group is a row that holds rows. The word on it says how what is inside
      * adds up, and what is inside is drawn by the same code as everything
@@ -2084,9 +2120,9 @@ it are underneath it">Grouped</button>
     /* A row still being chosen has no place in the order yet, and one row on
      * its own has nowhere to go. */
     const move = where && !where.alone
-      ? `<button class="mv" data-act="critup" ${at} title="Move up"
+      ? `<button class="mv" data-act="critup" ${at} ${named("Move up")}
                  ${where.first ? "disabled" : ""}>↑</button>
-         <button class="mv" data-act="critdown" ${at} title="Move down"
+         <button class="mv" data-act="critdown" ${at} ${named("Move down")}
                  ${where.last ? "disabled" : ""}>↓</button>`
       : "";
     return `<div class="crit${open ? " open" : ""}">
@@ -2094,7 +2130,7 @@ it are underneath it">Grouped</button>
         ${value}
         ${move}
         <button class="x row-x" data-act="${index == null ? "cancelcrit" : "unchip"}" ${at}
-                title="${index == null ? "Cancel" : "Remove"}">×</button>
+                ${named(index == null ? "Cancel" : "Remove")}>×</button>
       </div>`;
   }
 
@@ -3097,6 +3133,13 @@ button.cat:hover { color: var(--primary-text-color); background: rgba(127,127,12
 .sev-active .dot, .dot.sev-active { background: var(--success-color, #5cb87f); }
 .sev-info .dot, .dot.sev-info { background: var(--secondary-text-color); }
 .dot.sev-none { background: transparent; box-shadow: inset 0 0 0 1px var(--secondary-text-color); }
+/* On the screen the dot says it. This is the same thing for anything that
+   cannot see a dot - taken out of the flow rather than hidden, because
+   display:none and visibility:hidden are not read out either. */
+.sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 .ed-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; flex: none; }
 .name { font-size: 16px; width: 220px; }
