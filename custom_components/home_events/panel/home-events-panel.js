@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-23f";
+const PANEL_BUILD = "2026-08-23g";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -799,6 +799,23 @@ class HomeEventsPanel extends HTMLElement {
       const ia = declared.indexOf(a), ib = declared.indexOf(b);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     });
+    /* Sections read in the order somebody arranged them, because that order
+     * means something - it is the order a card puts them in. The events inside
+     * one do not: they were in the order they happened to be written, which is
+     * an order only the library remembers and nobody can search by. So they
+     * read alphabetically, and looking one up is scanning rather than hunting.
+     *
+     * Here and not in the store: the library keeps the order it was written
+     * in, a rename keeps its place in it, and an export still comes back the
+     * way it went. This is how the list is read, not how the library is kept.
+     *
+     * localeCompare rather than <, because the names in this house have
+     * capitals, brackets and accents in them, and "Ventilation" sorting before
+     * "alarm" because of an upper-case V is the kind of order that reads as no
+     * order at all. `numeric` so a "Zone 2" comes before a "Zone 10". */
+    const byName = (a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+    for (const cat of order) buckets[cat].sort(byName);
 
     this._el.list.innerHTML = order.map((cat) => {
       const rows = buckets[cat].map((name) => {

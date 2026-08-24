@@ -391,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-22a";
+const CARD_BUILD = "2026-08-23a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -612,7 +612,8 @@ const DEFAULT_TEXT = {
   /* On a group row that has an entity behind it: the one place a second
      gesture can announce itself, since a hold leaves no mark on a screen. */
   hold: "Hold for this group's own controls",
-  more: "+{n} more", // what a section had to leave out
+  more: "+{n} more", // what a section had to leave out, and the way to see it
+  less: "Show fewer", // and the way back
 };
 
 const DEFAULTS = {
@@ -1683,6 +1684,8 @@ class HomeEventCard extends HTMLElement {
      * had quietly hidden something. */
     this._open = new Set();
     this._folded = new Set();
+    /* Sections the reader has asked to see the whole of. */
+    this._expanded = new Set();
     this._onClick = (e) => this._handleClick(e);
     this._onKey = (e) => this._handleKey(e);
     this._onDown = (e) => this._holdStart(e);
@@ -2319,6 +2322,14 @@ class HomeEventCard extends HTMLElement {
       const key = row.dataset.group;
       if (this._open.has(key)) this._open.delete(key);
       else this._open.add(key);
+      this._repaint();
+      return true;
+    }
+    const more = path.find((n) => n && n.dataset && n.dataset.more);
+    if (more) {
+      const id = more.dataset.more;
+      if (this._expanded.has(id)) this._expanded.delete(id);
+      else this._expanded.add(id);
       this._repaint();
       return true;
     }
@@ -3239,6 +3250,12 @@ class HomeEventCard extends HTMLElement {
    * room; a cap that scrolls is a region of a page that a finger cannot get
    * past, which is what this card was doing to a phone. */
   _capSections(sections) {
+    /* Kept whole beside the trimmed copy, because a count that cannot be
+     * opened is a count nobody asked for: "+4 more" is only worth printing if
+     * the four are somewhere. The budget is worked out the same way either
+     * way, so opening one section takes nothing from any other - it only draws
+     * what this one was already known to be holding back. */
+    for (const s of sections) s.all = s.events;
     const perSection = this._config.max_per_section;
     if (perSection) {
       for (const s of sections) {
@@ -3409,6 +3426,7 @@ class HomeEventCard extends HTMLElement {
        * nothing until some unrelated entity in the house happens to move. */
       [...this._open].sort(),
       [...this._folded].sort(),
+      [...this._expanded].sort(),
     ]);
     if (sig === this._sig) return;
     this._sig = sig;
@@ -3455,14 +3473,24 @@ class HomeEventCard extends HTMLElement {
           `<span class="cnt">${n}</span></div>`
         : "";
       if (shut) return split ? `<div class="card shut">${head}</div>` : head;
+      /* Open, this section draws everything it had; shut, the budget's share
+       * of it. Which is a decision the person reading has made, so it survives
+       * a house that keeps moving underneath them but not a reload - the same
+       * rule the folds and the open groups follow. */
+      const open = this._expanded.has(s.id);
       const rows =
         `<div class="rows" data-sec="${esc(s.id)}">` +
-        s.events.map((e) => this._row(e, now) + this._membersHtml(e, now)).join("") +
+        (open ? s.all : s.events)
+          .map((e) => this._row(e, now) + this._membersHtml(e, now)).join("") +
         `</div>`;
       /* Reported under the section it was taken from, where the number says
-       * something about a list you can see. */
+       * something about a list you can see - and now says it to something you
+       * can press, since the alternative was telling somebody there are four
+       * more of these and no way to find out which. */
       const capped = s.over
-        ? `<div class="more">${esc(fill(text.more, s.over))}</div>`
+        ? `<div class="more" data-more="${esc(s.id)}" role="button" tabindex="0"` +
+          ` aria-expanded="${open ? "true" : "false"}">` +
+          `${esc(open ? text.less : fill(text.more, s.over))}</div>`
         : "";
       return split ? `<div class="card">${head}${rows}${capped}</div>` : head + rows + capped;
     });
@@ -3834,10 +3862,27 @@ const STYLES = `
   color: var(--secondary-text-color);
   padding: 6px 0;
 }
+/* It says a number and it opens a list, so it has to look like neither a
+   sentence nor a button on a form: the same quiet size as the times beside it,
+   and the underline a link has, which is the one convention that reads as
+   "there is more of this" without taking the eye off the rows. */
 .more {
   font-size: var(--ha-font-size-s, 12px);
-  color: var(--disabled-text-color);
+  color: var(--secondary-text-color);
   padding: 8px 0 0;
+  cursor: pointer;
+  width: fit-content;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--divider-color, rgba(127,127,127,.4));
+  -webkit-tap-highlight-color: transparent;
+}
+.more:hover { color: var(--primary-text-color); }
+.more:focus { outline: none; }
+.more:focus-visible {
+  outline: 2px solid var(--accent-color, var(--amber-color, #d8a24e));
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* A row you can hold has to survive being held: half a second of finger on a

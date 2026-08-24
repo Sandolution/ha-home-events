@@ -54,6 +54,13 @@ fewest so far, so the line rises evenly and only the sections sticking out of
 it get cut. What a section had to leave out is counted underneath it, where the
 number is about a list you can see.
 
+**And that count opens it.** Press *+4 more* — or focus it and press Enter, it
+is a control like any other row — and the section draws everything it has, with
+*Show fewer* in its place to put it back. Nothing else on the card moves: the
+budget is worked out the same way whether a section is open or not, so opening
+one takes no rows from any other. Like a fold or an opened group, it is a
+reading position rather than a preference and does not survive a reload.
+
 With sixteen rows going and `max: 12`:
 
 | section | has | shows | |
@@ -190,7 +197,8 @@ a silently accepted typo is a card in two languages.
 | `degree` | `°` | |
 | `arrow` | `→` | between a thermostat's current and target |
 | `hold` | `Hold for this group's own controls` | on a group row that has an entity behind it |
-| `more` | `+{n} more` | what a section had to leave out |
+| `more` | `+{n} more` | what a section had to leave out, and the way to see it |
+| `less` | `Show fewer` | and the way back |
 
 Section headings for the four severities, used when `group_by: severity`:
 
