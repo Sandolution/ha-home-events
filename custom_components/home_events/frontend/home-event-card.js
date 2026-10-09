@@ -1951,10 +1951,26 @@ class HomeEventCard extends HTMLElement {
     if (this._libraryAsked || !this._hass) return;
     this._libraryAsked = true;
     const conn = this._hass.connection;
+    /* The subscribe resolves a round trip later, and by then this card may be
+     * off the page. Without the generation check the resolution hands a live
+     * subscription to a detached element and nothing is left holding the
+     * handle that would cancel it: its callback keeps the card, its shadow
+     * root and its stylesheet alive for as long as the page lives, and goes
+     * on redrawing them.
+     *
+     * The generation rather than isConnected, because Lovelace sets hass
+     * before putting a card in the document - the first call here legitimately
+     * runs on a disconnected element, and refusing that would mean never
+     * following the Event Manager at all. */
+    const gen = (this._libGen = (this._libGen || 0) + 1);
     this._readLibrary();
     conn
       .subscribeMessage(() => this._readLibrary(), { type: "home_events/subscribe" })
       .then((off) => {
+        if (gen !== this._libGen) {
+          off();
+          return;
+        }
         this._libraryOff = off;
       })
       .catch(() => {});
@@ -2255,11 +2271,24 @@ class HomeEventCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    /* Moved on, so anything still in flight from the last life is not ours. */
+    this._libGen = (this._libGen || 0) + 1;
     if (this._libraryOff) {
       this._libraryOff();
       this._libraryOff = null;
       this._libraryAsked = false;
+    } else if (!this._given) {
+      /* Disconnected while the subscribe was still in flight. _libraryAsked
+       * went true the moment it was asked for, so without this the card comes
+       * back with no subscription and no intention of asking for one, and
+       * quietly stops following the Event Manager for the rest of the page's
+       * life. Not when a library was handed in: that one is not ours to
+       * re-ask for. */
+      this._libraryAsked = false;
     }
+    /* A finger still down when the view is torn down leaves a 500ms timeout
+     * holding this card, which then fires more-info from a detached element. */
+    this._holdStop();
     if (this._timer) window.clearInterval(this._timer);
     this._timer = null;
     document.removeEventListener("visibilitychange", this._onVisibility);
@@ -2474,9 +2503,29 @@ class HomeEventCard extends HTMLElement {
    * wasteful on an always-on tablet. The candidate index is the set of entity
    * ids any source could possibly care about; it only changes when entities
    * are added or removed, which the entity count detects well enough. */
+  /* How many entities there are, asked at most once a second.
+   *
+   * Object.keys materialises all 1477 of them to read .length, which measured
+   * at 0.8ms on the dining-room tablet - so the cheap path of this cache cost
+   * more than the walk it exists to avoid. Entities arrive when an integration
+   * loads and leave when one unloads; a second of lag before a new one becomes
+   * a candidate is not something anyone can see, and eleven counts a second is
+   * not something anyone needed.
+   *
+   * Not keyed on hass.states identity, which looks stronger and is useless:
+   * the frontend builds a new states object on every update, so identity reads
+   * as "changed" on every tick and the cache would never hit at all. */
+  _entityCount() {
+    const now = Date.now();
+    if (this._ecAt !== undefined && now - this._ecAt < 1000) return this._ecN;
+    this._ecAt = now;
+    this._ecN = Object.keys(this._hass.states).length;
+    return this._ecN;
+  }
+
   _index() {
     const hass = this._hass;
-    const key = Object.keys(hass.states).length;
+    const key = this._entityCount();
     if (this._idx && this._idxKey === key) return this._idx;
     const byDomain = this._config._eventsByDomain;
     const all = this._config._eventsAll;
@@ -3473,10 +3522,20 @@ class HomeEventCard extends HTMLElement {
      * only touched when the rendered content would actually differ. Timestamps
      * are in the signature because a row that changed *when* it started is a
      * different row; the per-minute text refresh happens in _tick. */
+    /* Everything a row paints, and nothing else.
+     *
+     * Three fields were missing, and every one of them is state-dependent: a
+     * media player's icon turns from play to pause, a thermostat's from
+     * radiator to snowflake, an alarm's between three shields, and `mode`
+     * decides whether a time reads as elapsed or remaining. A row whose icon
+     * changed while its words did not kept the old icon until something else
+     * on the card happened to move. Members are signed the same way because
+     * _membersHtml draws them through the same _row. */
+    const sign = (e) => [e.key, e.severity, e.title, e.sub, e.status, e.at,
+                         e.tone, e.icon, e.iconColor, e.mode];
     const sig = JSON.stringify([
       this._config.group_by,
-      events.map((e) => [e.key, e.severity, e.title, e.sub, e.status, e.at, e.tone,
-                         e.members ? e.members.map((m) => m.key + m.status) : 0]),
+      events.map((e) => [sign(e), e.members ? e.members.map(sign) : 0]),
       /* What is open is part of what is drawn. Without this a toggle changes
        * nothing until some unrelated entity in the house happens to move. */
       [...this._open].sort(),
