@@ -391,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-08-23a";
+const CARD_BUILD = "2026-10-09a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -1677,6 +1677,7 @@ class HomeEventCard extends HTMLElement {
     this._sig = null;
     this._idx = null;
     this._idxKey = null;
+    this._covered = null;
     this._timer = null;
     /* Which grouped rows are open and which sections are folded. Deliberately
      * not persisted: it is a reading position, not a preference, and a wall
@@ -1744,6 +1745,7 @@ class HomeEventCard extends HTMLElement {
     this._config = cfg;
     this._sig = null; // force a redraw on the next hass tick
     this._idx = null;
+    this._covered = null;
     /* A library handed over before the config was - see `set library`. */
     if (this._given) this.libraryOk = this._applyLibrary(this._given);
   }
@@ -2020,6 +2022,7 @@ class HomeEventCard extends HTMLElement {
     cfg._nonAreas = new Set(asList(data.non_areas).map(areaSlug));
     this._sig = null;
     this._idx = null;
+    this._covered = null;
     if (this._hass) {
       this._loadRegistries();
       this._render();
@@ -2072,6 +2075,10 @@ class HomeEventCard extends HTMLElement {
         for (const row of list || []) map[row[kind.id]] = row;
         this._reg[kind.key] = map;
         this._lookupCache = null;
+        /* Areas, labels, devices and floors are three quarters of what the
+         * filter ladder decides on, so an arriving registry can change who is
+         * covered. */
+        this._covered = null;
         this._sig = null;
       })
       .catch(() => {
@@ -2487,6 +2494,7 @@ class HomeEventCard extends HTMLElement {
     this._idx = idx;
     this._idxKey = key;
     this._lookupCache = null;
+    this._covered = null; // different candidates, so a different answer
     return idx;
   }
 
@@ -2541,23 +2549,60 @@ class HomeEventCard extends HTMLElement {
     return passesFilter(src._include, src._exclude, entityId, ctx);
   }
 
+  /* Which entities an event covers - the filter ladder's answer, kept.
+   *
+   * This is a question about the event and the registry, not about the house:
+   * an include/exclude decides it, and a state only enters through the one
+   * fallback that reads a room out of a friendly name. The answer therefore
+   * holds still while the house moves, and it was being recomputed on every
+   * hass tick regardless.
+   *
+   * It mattered because of how wide the candidate lists are. An event written
+   * without a domain is handed every entity there is, and one here is: between
+   * the four widest, 4141 entities were going through the ladder on each tick,
+   * which measured as 43,919 filter evaluations a second on the dining-room
+   * tablet - arriving at the same seventy-odd entities every time, 29% of that
+   * tablet's main thread.
+   *
+   * Dropped whenever any of its inputs can have changed: the candidate lists
+   * being rebuilt (an entity came or went), a registry arriving, the library
+   * being saved, a new config. A friendly_name changing under the area
+   * fallback arrives as an entity registry update, which is the same path. */
+  _coveredFor(name, cfg, idx) {
+    if (!this._covered) this._covered = new Map();
+    const known = this._covered.get(name);
+    if (known) return known;
+    const hass = this._hass;
+    const ids = [];
+    for (const id of idx[name] || []) {
+      const st = hass.states[id];
+      if (st && this._covers(id, cfg, st)) ids.push(id);
+    }
+    this._covered.set(name, ids);
+    return ids;
+  }
+
   /* One event: walk its candidates, drop what its filters and conditions
    * reject, and hand each survivor to the renderer for its domain.
    *
    * A grouped event collects instead of rendering one at a time - it cannot say
    * "3 lights on" until it has seen all three. */
-  _event(out, name, cfg) {
+  _event(out, name, cfg, idx) {
     if (cfg.enabled === false) return;
     const hass = this._hass;
     const grouped = [];
 
     /* What the event covers, filters only. Groups are decided against this
      * rather than against the loop below, because which rows are groups is a
-     * fact about the event and should not change every time a lamp does. */
+     * fact about the event and should not change every time a lamp does.
+     *
+     * The list is remembered; the states are checked each time. An entity can
+     * be gone while the count that invalidates the cache has not moved - one
+     * arrived as another left - and everything downstream reads st.state
+     * without asking. */
     const covered = [];
-    for (const id of this._index()[name] || []) {
-      const st = hass.states[id];
-      if (st && this._covers(id, cfg, st)) covered.push(id);
+    for (const id of this._coveredFor(name, cfg, idx)) {
+      if (hass.states[id]) covered.push(id);
     }
     const groups = new Set(
       groupRowEntities(hass, covered, (cfg.include || {}).entities)
@@ -3195,7 +3240,17 @@ class HomeEventCard extends HTMLElement {
 
   _collect() {
     const out = [];
-    for (const [name, cfg] of this._config._events) this._event(out, name, cfg);
+    /* Asked once a frame, not once an event.
+     *
+     * The index is also the thing that notices entities arriving or leaving,
+     * and it notices by counting the keys of hass.states - so sixteen events
+     * asking it separately meant counting 1477 keys sixteen times to answer
+     * the same question sixteen times over. On the dining-room tablet that
+     * alone was 7.7% of the main thread. */
+    const idx = this._index();
+    for (const [name, cfg] of this._config._events) {
+      this._event(out, name, cfg, idx);
+    }
 
     const seen = new Set();
     return out.filter((e) => {
