@@ -70,7 +70,7 @@ def icon_color_ok(value: Any) -> bool:
     if re.sub(r"[\s_]+", "-", written.lower()) in ICON_COLOR_NAMES:
         return True
     return bool(CSS_COLOR.match(written))
-# home-event-card.js: SORT_MODES — how a section orders the rows inside it.
+# home-event-card.js: SORT_MODES, how a section orders the rows inside it.
 SORT_MODES = ["recent", "duration", "name"]
 GROUP_MODES = [False, True, "area", "all"]
 MATCH_MODES = ["any", "all"]

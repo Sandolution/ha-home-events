@@ -1,4 +1,4 @@
-/* home-events-panel — the Events editor in the sidebar.
+/* home-events-panel: the Events editor in the sidebar.
  *
  * Hand-written, no build step. This host has no JavaScript runtime, so nothing
  * here can be compiled, bundled or type-checked; the same constraint shaped the
@@ -219,8 +219,8 @@ const PLACEHOLDERS = [
   ["{state.raw}", "on", "the same, spelled the way a condition spells it"],
   ["{attr.brightness}", "128", "any attribute, by name"],
   ["{attr.friendly_name}", "Kitchen | Ceiling", "the whole name, room and all"],
-  ["{state@sensor.other}", "—", "some other entity's state, not this one's"],
-  ["{n}", "—", "how many rows this one stands for, on a grouped event"],
+  ["{state@sensor.other}", "-", "some other entity's state, not this one's"],
+  ["{n}", "-", "how many rows this one stands for, on a grouped event"],
 ];
 
 /* Three replacements and what they actually did, on two more invented names
@@ -248,10 +248,10 @@ const FILTER_EXAMPLES = [
    "drop the machine word an integration put on the end"],
   ["{name|s/^[^|]+[|] | [|] (State|Error|Status)$//g}",
    "Ground Floor | Air Purifier | Error", "Air Purifier",
-   "both at once — two alternatives and g, since a slot gets one replace"],
-  ["{name|s/\\s*[|]\\s*/ — /g}",
-   "Kitchen | Dishwasher | State", "Kitchen — Dishwasher — State",
-   "every pipe becomes a dash — that is what g is for"],
+   "both at once: two alternatives and g, since a slot gets one replace"],
+  ["{name|s/\\s*[|]\\s*/ - /g}",
+   "Kitchen | Dishwasher | State", "Kitchen - Dishwasher - State",
+   "every pipe becomes a dash; that is what g is for"],
   ["{name|s/^.*[|] //}",
    "Gas | Consumption | Daily", "Daily",
    "the last segment on its own"],
@@ -1035,7 +1035,7 @@ class HomeEventsPanel extends HTMLElement {
     return `<div class="home">
       <p class="lede">${empty
         ? `This library is empty. An event is a rule for what a card should
-           say about part of the house — start with one.`
+           say about part of the house. Start with one.`
         : `Nothing is open. Pick an event on the left to change it, or start
            a new one.`}</p>
       <div class="tiles">${facts.map(([n, what]) =>
@@ -1045,7 +1045,7 @@ class HomeEventsPanel extends HTMLElement {
       <h2>What a card is showing right now</h2>
       <div data-homecard></div>
       <p class="hint">A real card, reading this library against the house as it
-        is this second — not a mock-up. What a dashboard shows also depends on
+        is this second, not a mock-up. What a dashboard shows also depends on
         that card's own options, so yours may be capped or sorted differently.</p>`}
       <h2>Where things are</h2>
       <ul class="ways">
@@ -1056,7 +1056,7 @@ class HomeEventsPanel extends HTMLElement {
           already says everything that one says.</li>
         <li><b>Sections</b> is the order the headings come in, what each is
           called, and how the rows inside one are sorted.</li>
-        <li><b>Whole library</b> is all of it as YAML — how it leaves this
+        <li><b>Whole library</b> is all of it as YAML: how it leaves this
           machine and how it comes back.</li>
       </ul>
     </div>`;
@@ -1300,7 +1300,7 @@ class HomeEventsPanel extends HTMLElement {
     }).join("");
     return `<div class="fs">
         <div class="legend">Sections
-          <span class="q">— the order they read in, and how each sorts its rows</span></div>
+          <span class="q">the order they read in, and how each sorts its rows</span></div>
         <div class="crits wide">
           <div class="secrow head">
             <span class="dim"${tip("sort")}>Rows read, unless a section says otherwise</span>
@@ -1479,7 +1479,7 @@ class HomeEventsPanel extends HTMLElement {
     if (!draft.include || !Object.keys(draft.include).some(
       (k) => k !== "match" && (draft.include[k] || []).length)) {
       if (this._preview) this._preview.remove();
-      host.innerHTML = `<div class="hint">Nothing to draw yet — say what this
+      host.innerHTML = `<div class="hint">Nothing to draw yet. Say what this
         event covers on the What tab.</div>`;
       return;
     }
@@ -1669,14 +1669,14 @@ class HomeEventsPanel extends HTMLElement {
     if (sub === "when") {
       return tabs + `<div class="fs" id="question" role="tabpanel">
          <div class="legend"${tip("conditions")}>When
-           <span class="q">— and in which state?</span></div>
+           <span class="q">and in which state?</span></div>
          ${this._conditionsHtml(d.conditions)}
          <div class="count" data-count></div>
        </div>`;
     }
     if (sub === "what") {
       return tabs + `<div class="fs" id="question" role="tabpanel">
-         <div class="legend">What <span class="q">— which entities does this cover?</span></div>
+         <div class="legend">What <span class="q">which entities does this cover?</span></div>
          ${this._filterHtml("include", d.include || {})}
          ${this._filterHtml("exclude", d.exclude || {})}
          <div class="count" data-count></div>
@@ -1686,7 +1686,7 @@ class HomeEventsPanel extends HTMLElement {
     return (
       tabs +
       `<div class="fs" id="question" role="tabpanel">
-         <div class="legend">How <span class="q">— how should the row read?</span></div>
+         <div class="legend">How <span class="q">how should the row read?</span></div>
 
          <div class="field"><div class="label"${tip("enabled")}>Enabled</div><div>
            <label class="check"><input type="checkbox" data-set="enabled"
@@ -1770,14 +1770,14 @@ it are underneath it">Grouped</button>
     return `<details class="cheat"${this._cheatOpen ? " open" : ""} data-cheat>
         <summary>(?) What you can write in Title, Detail, Status and Icon</summary>
         <div class="cheatbody">
-          <div class="exhead">Placeholders <span class="dim">— reading
+          <div class="exhead">Placeholders <span class="dim">reading
             ${esc(EXAMPLE_ENTITY)}</span></div>
           ${PLACEHOLDERS.map(([tpl, out, what]) => row(
             `<code>${esc(tpl)}</code>` +
             `<span class="exout">${esc(out)}</span>` +
             `<span class="dim">${esc(what)}</span>`)).join("")}
 
-          <div class="exhead">Replacing <span class="dim">— a | inside the
+          <div class="exhead">Replacing <span class="dim">a | inside the
             braces runs s/pattern/replacement/flags on what was read</span></div>
           ${FILTER_EXAMPLES.map(([tpl, from, to, what]) =>
             `<div class="exblock"><code>${esc(tpl)}</code>` +
@@ -1785,7 +1785,7 @@ it are underneath it">Grouped</button>
             `<span class="exout">${esc(to)}</span></div>` +
             `<div class="dim">${esc(what)}</div></div>`).join("")}
 
-          <div class="hint"><b>A literal pipe is <code>[|]</code></b> — not
+          <div class="hint"><b>A literal pipe is <code>[|]</code></b>, not
             <code>\\|</code>. A bare <code>|</code> means alternation, and an
             escaped one turns into <code>\\\\|</code> the moment anything
             escapes it twice, which reads as "a backslash, or nothing" and
@@ -1795,7 +1795,7 @@ it are underneath it">Grouped</button>
             may still have alternation in it: <code>s/a|b//</code> is one
             replacement, not two. After the last slash, <b>i</b> ignores case
             and <b>g</b> replaces every match instead of the first. There is no
-            case conversion — <code>\\U</code> is just two characters.<br>
+            case conversion: <code>\\U</code> is just two characters.<br>
             <b>{name}</b> is the friendly name exactly as Home Assistant has
             it, pipes and all, which is why these patterns look for them. A
             pattern that will not compile leaves the text alone and says so in
@@ -1817,7 +1817,7 @@ it are underneath it">Grouped</button>
       /* An empty option only where there is something for empty to mean: in a
          mapping, a half nobody filled in is "the same as the others". */
       (path === "time_mode" ? "" :
-        `<option value=""${current ? "" : " selected"}>—</option>`) +
+        `<option value=""${current ? "" : " selected"}>-</option>`) +
       TIME_MODES.map((m) => `<option value="${m}"` +
         `${(current || (path === "time_mode" ? DEFAULT_TIME_MODE : "")) === m
           ? " selected" : ""}>${humanise(m)}</option>`).join("") +
@@ -2224,7 +2224,7 @@ it are underneath it">Grouped</button>
            of these
          </div>`
       : count > 1
-      ? `<div class="hint matchline">Entities in <b>any</b> of these — two of
+      ? `<div class="hint matchline">Entities in <b>any</b> of these: two of
            one kind can only mean either.</div>`
       : "";
 
@@ -2533,7 +2533,7 @@ it are underneath it">Grouped</button>
     );
     if (!this._engine || !anything) {
       this._setCount(box, anything || this._sub !== "when" ? "" :
-        `<span class="dim">Nothing to check yet — say what this event covers
+        `<span class="dim">Nothing to check yet. Say what this event covers
           on the What tab.</span>`);
       return;
     }
@@ -2623,8 +2623,8 @@ it are underneath it">Grouped</button>
     const head = n
       ? `<span class="ok">${n} of ${total} ${n === 1 ? "is" : "are"} in this
           state right now</span>`
-      : `<span class="dim">None of the ${total} are in this state right now
-          — nothing would show.</span>`;
+      : `<span class="dim">None of the ${total} are in this state right now,
+          so nothing would show.</span>`;
     return head +
       (n ? `<button class="link" data-act="showmatches">${
         this._showMatches ? "hide" : "show them"}</button>` : "") +
@@ -3676,7 +3676,7 @@ textarea.yaml {
 .cheatbody { padding: 10px 0 0 18px; }
 .exhead { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
   color: var(--secondary-text-color); padding: 12px 0 6px; }
-.exhead .dim { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.exhead .dim { text-transform: none; letter-spacing: 0; font-size: 12px; margin-left: 6px; }
 /* Three columns: what you write, what it comes out as, what that means. The
    template column is sized to the longest of them so the arrows line up. */
 .exrow { display: grid; grid-template-columns: 260px minmax(0, 190px) minmax(0, 1fr);

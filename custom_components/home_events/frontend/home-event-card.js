@@ -143,7 +143,7 @@
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name. Overrides whatever the library
  *                    says; leave it out to follow the library
- *   max:             integer, default 14 — how many rows the card draws in
+ *   max:             integer, default 14: how many rows the card draws in
  *                    total. Shared out rather than sliced: every section keeps
  *                    at least one row and the biggest give theirs up first, so
  *                    a long list cannot push the others off the card. What a
@@ -154,14 +154,14 @@
  *
  * There is no pixel ceiling and nothing here scrolls. A scroll container
  * inside a page is where a touch gesture gets stuck, and the card was one.
- *   collapsible:     bool, default false — section headings fold their rows.
+ *   collapsible:     bool, default false: section headings fold their rows.
  *                    What is folded is a reading position, not a preference,
  *                    so it is not remembered across a reload
- *   promote_alerts:  a section id, or false, default "alerts" — anything red
+ *   promote_alerts:  a section id, or false, default "alerts": anything red
  *                    is filed there rather than under its own section
- *   split_sections:  bool, default true — a card per section. Turn off for
+ *   split_sections:  bool, default true: a card per section. Turn off for
  *                    `group_by: area`, which otherwise makes a card per room
- *   tidy_names:      bool, default false — a friendly name is drawn as Home
+ *   tidy_names:      bool, default false: a friendly name is drawn as Home
  *                    Assistant has it, and a row's location comes from the
  *                    area assigned in the registry. True restores the old
  *                    behaviour, where the first `|` segment was taken as the
@@ -175,11 +175,11 @@
  *                      text:
  *                        empty:     Nothing going on
  *                        elsewhere: Elsewhere
- *                        severities: {alert: …, attention: …, active: …}
- *                        climate:    {heating: Heating, idle: Idle, …}
- *                        status:     {running: …, open_pct: "{n}% open"}
+ *                        severities: {alert: ..., attention: ..., active: ...}
+ *                        climate:    {heating: Heating, idle: Idle, ...}
+ *                        status:     {running: ..., open_pct: "{n}% open"}
  *                        time:       {minute: "{n}m", remaining: "{n} left"}
- *                        strip:      {timer: [Timer], climate: [Heating, …]}
+ *                        strip:      {timer: [Timer], climate: [Heating, ...]}
  *
  *                    Entity names, area names and media/cover/vacuum states
  *                    are not in here - Home Assistant already knows those in
@@ -624,7 +624,7 @@ const DEFAULT_TEXT = {
 const DEFAULTS = {
   /* category | area | severity | none */
   group_by: "category",
-  /* recent | duration | name — see _sortEvents */
+  /* recent | duration | name, see _sortEvents */
   sort: "recent",
   /* How many rows the card draws, altogether.
    *
@@ -3809,7 +3809,7 @@ const STYLES = `
 /* The label leads once there is a chevron before it. */
 .sec.fold .lab { margin-inline-end: auto; }
 
-/* split_sections: false — every section shares one surface, so the break has
+/* split_sections: false: every section shares one surface, so the break has
    to be drawn rather than left as a gap. This is the layout group_by: area
    wants, where eight rooms would otherwise mean eight small cards. */
 .card.joined .rows + .sec {

@@ -33,10 +33,10 @@ There are two parts:
 
 ### HACS
 
-1. In HACS, open the menu (⋮) → **Custom repositories**.
+1. In HACS, open the menu (⋮) > **Custom repositories**.
 2. Add `https://github.com/Sandolution/ha-home-events` with the type **Integration**.
 3. Install **Home Events** and restart Home Assistant.
-4. Go to **Settings → Devices & services → Add integration** and pick
+4. Go to **Settings > Devices & services > Add integration** and pick
    **Home Events**. There is nothing to fill in.
 5. Open **Events** in the sidebar to write the library, and add the card to a
    dashboard:
@@ -49,11 +49,11 @@ There are two parts:
 
 1. Copy `custom_components/home_events` from this repository into
    `config/custom_components/`.
-2. Restart Home Assistant and add it under **Settings → Devices & services →
+2. Restart Home Assistant and add it under **Settings > Devices & services >
    Add integration**.
 
 **Had the card as a separate file before?** Remove the old dashboard resource
-that pointed at `/local/custom/home-event-card.js` (Settings → Dashboards → ⋮ →
+that pointed at `/local/custom/home-event-card.js` (Settings > Dashboards > ⋮ >
 Resources), and the file itself. The card guards against being defined twice,
 so nothing breaks while both are still there.
 
@@ -111,8 +111,8 @@ events:
     time_mode: ago
 ```
 
-The panel writes this for you. The full format — every key of an event, the
-filters, the conditions, wording per kind of row, colours — is in
+The panel writes this for you. The full format (every key of an event, the
+filters, the conditions, wording per kind of row, colours) is in
 [docs/home-event-card.md](docs/home-event-card.md#the-library), as is what the
 card exports for other code.
 
