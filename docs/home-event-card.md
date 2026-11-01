@@ -30,19 +30,18 @@ type: custom:home-event-card
 
 That is a complete, working card. Everything below is optional.
 
-| Option | Default | What it is |
-|---|---|---|
-| `group_by` | `"category"` | `category`, `area`, `severity` or `none` — what the sections are. |
-| `sort` | `"recent"` | `recent`, `duration` or `name`. Overrides whatever the library says; leave it out to follow the library. |
-| `max` | `14` | How many rows the card draws in total — shared out between the sections, not sliced off the end. See below. |
-| `max_per_section` | `0` | A hard limit for one section, applied before the budget is shared. `0` leaves it to `max`. |
-| `hide_when_empty` | `false` | A card that vanishes leaves a hole in a sections layout, and a hole reads as a broken card rather than as a quiet house. |
-
-| `collapsible` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
-| `promote_alerts` | `"alerts"` | A section id, or `false` — anything red is filed there rather than under its own section. Only applies to `group_by: category`. |
-| `split_sections` | `true` | One card per section, separated by a gap. Turn it off for `group_by: area`, which otherwise makes a card per room. |
-| `tidy_names` | `false` | Let the card rewrite friendly names. Off. See below. |
-| `text` | see below | Every string the card writes itself. |
+| Option | Values | Default | What it is |
+|---|---|---|---|
+| `group_by` | `category`, `area`, `severity` or `none` | `category` | What the sections are. Anything else is a configuration error. |
+| `sort` | `recent`, `duration` or `name` | the library's `sort` | How rows are ordered within a section. Set here, it overrides the library; leave it out to follow the library. Anything else is a configuration error. |
+| `max` | a whole number, 1 or more | `14` | How many rows the card draws in total — shared out between the sections, not sliced off the end. See below. |
+| `max_per_section` | a whole number, 0 or more | `0` | A hard limit for one section, applied before the budget is shared. `0` leaves it to `max`. |
+| `hide_when_empty` | `true` or `false` | `false` | Whether the card disappears when nothing is happening. A card that vanishes leaves a hole in a sections layout, and a hole reads as a broken card rather than as a quiet house. |
+| `collapsible` | `true` or `false` | `false` | Section headings fold their rows. What is folded is a reading position, not a preference, so it is not remembered across a reload. |
+| `promote_alerts` | a section id, or `false` | `alerts` | Anything red is filed in this section rather than under its own; `false` leaves it where it is. `true` is the old spelling of `alerts`. Only applies to `group_by: category`. |
+| `split_sections` | `true` or `false` | `true` | One card per section, separated by a gap. Turn it off for `group_by: area`, which otherwise makes a card per room. |
+| `tidy_names` | `true` or `false` | `false` | Let the card rewrite friendly names. See below. |
+| `text` | a mapping, see [text](#text) | | Every string the card writes itself. |
 
 ### The row budget
 
@@ -272,12 +271,18 @@ categories:           # the sections, in order, and their headings
     sort: recent      # a section may order its own rows
 events:
   pumps:
-    include: {domains: [switch], areas: [garden]}
-    match: all
+    include: {domains: [switch], areas: [garden], match: all}
     conditions: [{condition: state, state: "on"}]
     category: alerts
     severity: attention
 ```
+
+| Key | Values | Default | What it is |
+|---|---|---|---|
+| `sort` | `recent`, `duration` or `name` | `recent` | The default order of rows in a section, for every card that doesn't set its own. |
+| `non_areas` | a list of area ids or names | none | Areas that are filing cabinets rather than places. |
+| `categories` | a list of sections | none | The sections, in the order they read. Each has an `id` (required), a `label` (the heading; the id when left out) and optionally its own `sort` (`recent`, `duration` or `name`). |
+| `events` | a mapping of event name to event | **required**, may be empty | What the house is watching. See [An event](#an-event). |
 
 `non_areas` is a fact about the house — an entity filed under an area called
 "System" is shown without a location rather than claiming to be somewhere.
@@ -287,21 +292,24 @@ appended, so that list arranges sections rather than registering them.
 
 ### An event
 
-| Key | What it is |
-|---|---|
-| `include` | Which entities this covers. **Required.** |
-| `exclude` | Which of those to leave out. |
-| `conditions` | And in which state. No conditions means every entity it covers, whatever it is doing. |
-| `category` | Which section the rows go in. Omit it for the generic section. |
-| `group` | `false`, `"area"` (one row per room) or `"all"` (one row for the lot). `true` is the old spelling of `area`. |
-| `severity` | `alert`, `attention`, `active` or `info` — the colour of the dot, and where it sorts. |
-| `time_mode` | `since`, `until`, `ago` or `remaining` — one word, or one per kind of row when the event groups. On a grouped row it also decides *which* of the group's instants is shown — see below. |
-| `show_time` | Whether the row carries a time at all. |
-| `title` `detail` `status` `icon` | How the row reads. See below. |
-| `icon_color` | What the icon is coloured, instead of what its severity would have coloured it. See below. |
-| `color` | The row's colour - icon, status word and tint - instead of what its severity would have painted. See below. |
-| `tint` | `true` or `false`: whether the row's background is tinted. Left out, alerts are and nothing else is. |
-| `enabled` | `false` keeps the event in the library and draws it on no card. |
+| Key | Values | Default | What it is |
+|---|---|---|---|
+| `include` | a filter, see [include and exclude](#include-and-exclude) | | **Required.** Which entities this covers. |
+| `exclude` | a filter | none | Which of those to leave out. |
+| `conditions` | a list of conditions, see [conditions](#conditions) | none | And in which state. No conditions means every entity it covers, whatever it is doing. |
+| `category` | a section id | the generic section | Which section the rows go in. An id that isn't in `categories` yet is added as a section. |
+| `group` | `false`, `area` or `all` | `false` | `area` makes one row per room, `all` one row for the lot. `true` is the old spelling of `area`. |
+| `severity` | `alert`, `attention`, `active` or `info` | what the card gives that kind of entity, `info` otherwise | The colour of the dot, and where it sorts. |
+| `time_mode` | `since`, `until`, `ago` or `remaining`, or one per kind of row | what the card gives that kind of entity, `since` otherwise | How the row's time reads. On a grouped row it also decides *which* of the group's instants is shown — see below. |
+| `show_time` | `true` or `false` | `true` | Whether the row carries a time at all. |
+| `title` `detail` `status` `icon` | text with placeholders, or one per kind of row | the card's own wording | How the row reads. See below. |
+| `icon_color` | a colour, or one per kind of row | the severity's colour | What the icon is coloured. See below. |
+| `color` | a colour, or one per kind of row | the severity's colour | The row's colour - icon, status word and tint. See below. |
+| `tint` | `true` or `false` | alerts only | Whether the row's background is tinted. |
+| `enabled` | `true` or `false` | `true` | `false` keeps the event in the library and draws it on no card. |
+
+"One per kind of row" is a mapping of `one`, `each` and `many` — see [Three
+kinds of row, three wordings](#three-kinds-of-row-three-wordings).
 
 ### include and exclude
 
@@ -315,8 +323,19 @@ include:
   match: all
 ```
 
-Naming two dimensions is ambiguous, so a filter that does has to say which it
-means: `match: any` for entities in either, `match: all` for entities in both.
+| Key | Values |
+|---|---|
+| `domains` | a list of domains, e.g. `[light, switch]` |
+| `floors` | a list of floor ids or names |
+| `areas` | a list of area ids or names; an entity without its own area counts in its device's |
+| `labels` | a list of label ids or names, on the entity, its device or its area |
+| `devices` | a list of device ids or names |
+| `entities` | a list of entity ids |
+| `entity_globs` | a list of patterns with `*` and `?`, e.g. `["*_group", "light.garden_*"]` |
+| `match` | `any` or `all` — required when more than one of the above is named, not used otherwise |
+
+A single value may be written without the list. Naming two dimensions is
+ambiguous, so a filter that does has to say which it means: `match: any` for entities in either, `match: all` for entities in both.
 Guessing wrong selects hundreds of entities where two dozen were meant, so the
 schema refuses to guess. Two values of *one* dimension are always "either" —
 an entity is in one room, and asking for two rooms at once would select
@@ -372,6 +391,27 @@ conditions:
       - {condition: state, state: "on"}
       - {condition: numeric_state, attribute: brightness, above: 10}
 ```
+
+All conditions in the list have to hold.
+
+| Condition | Keys | Values |
+|---|---|---|
+| `state` | `entity` | an entity id; left out, the entity the event matched |
+| | `state` | a state, or a list of states (any of them) |
+| | `state_not` | a state, or a list of states (none of them) |
+| | `for` | how long it has been so: `"HH:MM:SS"` or `"HH:MM"`, a number of seconds, or a mapping of `hours`, `minutes` and `seconds` |
+| `numeric_state` | `entity` | as above |
+| | `attribute` | an attribute to test instead of the state |
+| | `above` | a number |
+| | `below` | a number |
+| | `for` | as above |
+| `time` | `after` | a time of day, `"HH:MM"` or `"HH:MM:SS"` |
+| | `before` | a time of day; a window from 22:00 to 06:00 wraps midnight |
+| | `weekday` | a day or a list of days: `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` |
+| `and`, `or`, `not` | `conditions` | a list of conditions: all of them, any of them, or none of them |
+
+`state` needs `state` or `state_not`, `numeric_state` needs `above` or `below`,
+and `time` needs at least one of its three keys.
 
 ### How a row reads
 
