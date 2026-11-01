@@ -572,8 +572,20 @@ class HomeEventsPanel extends HTMLElement {
     /* Home Assistant sets hass before it appends the panel, so the shell has
      * to exist before anything the first load draws into it. */
     if (!this._built) this._build();
+    this._menuButton();
     if (first) this._start();
     else this._laterReflect();
+  }
+
+  /* Home Assistant's sidebar has a button of its own, so the bar only carries
+   * one where that button cannot be reached: on a narrow screen, where the
+   * sidebar is a drawer, or with the sidebar set to always hidden. The same
+   * rule as core's ha-menu-button. */
+  _menuButton() {
+    const btn = this.shadowRoot && this.shadowRoot.querySelector(".bar [data-act=menu]");
+    if (!btn) return;
+    const hidden = (this._hass && this._hass.dockedSidebar) === "always_hidden";
+    btn.style.display = this._narrow || hidden ? "" : "none";
   }
 
   /* The house moves while the editor is open, and what the counts and the
@@ -601,7 +613,10 @@ class HomeEventsPanel extends HTMLElement {
     return this._hass;
   }
 
-  set narrow(_v) {}
+  set narrow(v) {
+    this._narrow = !!v;
+    this._menuButton();
+  }
   set route(_v) {}
   set panel(_v) {}
 
@@ -3208,8 +3223,10 @@ main {
   flex: 1; min-height: 0; display: grid;
   /* The list, the gutter and the editor. The gutter is the 16px that used to
      be the gap, now a column of its own so it can be taken hold of; the
-     list's width is a variable the gutter sets - see _mountGutter. */
-  grid-template-columns: minmax(${SIDE_MIN}px, var(--side-w, 300px)) 16px minmax(0, 1fr);
+     list's width is a variable the gutter sets - see _mountGutter. Until
+     it is dragged, the list is wide enough for an event name with a
+     qualifier and its note beside it, and never more than two fifths. */
+  grid-template-columns: minmax(${SIDE_MIN}px, var(--side-w, min(460px, 40%))) 16px minmax(0, 1fr);
   padding: 16px; box-sizing: border-box;
 }
 /* The handle is the gap, with a hairline that only shows when it is wanted:
