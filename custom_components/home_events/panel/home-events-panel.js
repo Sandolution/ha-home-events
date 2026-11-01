@@ -510,12 +510,16 @@ async function loadHaComponents() {
   return have();
 }
 
-/* The card's own filter engine, from wherever Lovelace is serving the card.
- * Versioned URL and all - the resource record is the only place that knows
- * which build is current. Missing card, missing count: the form still works,
- * it just stops being able to say how many entities a filter selects. */
+/* The card's own filter engine, from where the integration serves the card.
+ * The integration knows the current versioned URL (it moves with the file's
+ * mtime); a dashboard resource is still looked for, for an install from
+ * before the card moved into the integration. Missing card, missing count:
+ * the form still works, it just stops being able to say how many entities a
+ * filter selects. */
 async function loadEngine(hass) {
   try {
+    const card = await hass.callWS({ type: "home_events/card" }).catch(() => null);
+    if (card && card.url) return await import(card.url);
     const rows = await hass.callWS({ type: "lovelace/resources" });
     const row = (rows || []).find((r) => /home-event-card\.js/.test(r.url || ""));
     if (!row) return null;

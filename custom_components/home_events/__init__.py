@@ -22,6 +22,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .card import async_register_card
 from .const import DOMAIN
 from .panel import async_register_panel, async_unregister_panel
 from .store import HomeEventsStore
@@ -37,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async_register(hass)
     entry.async_on_unload(await async_register_panel(hass))
+    entry.async_on_unload(await async_register_card(hass))
     return True
 
 

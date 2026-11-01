@@ -3,12 +3,12 @@
   "name": "Home Events",
   "codeowners": ["@sandolution"],
   "config_flow": true,
-  "dependencies": ["http", "panel_custom", "websocket_api"],
-  "documentation": "https://github.com/sandolution/home-events",
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
+  "documentation": "https://github.com/Sandolution/ha-home-events",
   "integration_type": "service",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/sandolution/home-events/issues",
+  "issue_tracker": "https://github.com/Sandolution/ha-home-events/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

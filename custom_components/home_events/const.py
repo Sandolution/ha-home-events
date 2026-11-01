@@ -1,7 +1,7 @@
 """Constants for the Home Events panel."""
 
 DOMAIN = "home_events"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # The store holds one library of events, and one is all it holds. Version 1
 # nested it under a "presets" mapping so a wall tablet could draw a different
@@ -23,3 +23,11 @@ PANEL_ICON = "mdi:bell-badge-outline"
 PANEL_FOLDER = "panel"
 PANEL_FILENAME = "home-events-panel.js"
 PANEL_URL = f"/{DOMAIN}_panel/{PANEL_FILENAME}"
+
+# The card ships with the integration and is loaded on every frontend page,
+# the way a dashboard resource would be (see card.py).
+CARD_FOLDER = "frontend"
+CARD_FILENAME = "home-event-card.js"
+CARD_URL = f"/{DOMAIN}_card/{CARD_FILENAME}"
+# hass.data key for the card's current, versioned URL.
+CARD_KEY = f"{DOMAIN}_card_url"

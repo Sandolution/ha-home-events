@@ -25,7 +25,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN, SCHEMA_VERSION, SIGNAL_UPDATED
+from .const import CARD_KEY, DOMAIN, SCHEMA_VERSION, SIGNAL_UPDATED
 from .schema import InvalidLibrary
 from .store import HomeEventsStore
 
@@ -284,8 +284,25 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/card"})
+@callback
+def ws_card(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Where the card's module is served right now.
+
+    The URL carries the file's mtime and moves when the card is edited, so
+    whatever imports the module asks rather than builds the URL itself. Not
+    admin-only, like `library`: the card is on every dashboard.
+    """
+    url = hass.data.get(CARD_KEY)
+    if url is None:
+        connection.send_error(msg["id"], ERR_NOT_LOADED,
+                              "Home Events is not set up.")
+        return
+    connection.send_result(msg["id"], {"url": url})
+
+
 @callback
 def async_register(hass: HomeAssistant) -> None:
     for handler in (ws_library, ws_save, ws_export, ws_import, ws_save_event,
-                    ws_delete_event, ws_parse, ws_subscribe):
+                    ws_delete_event, ws_parse, ws_subscribe, ws_card):
         websocket_api.async_register_command(hass, handler)
