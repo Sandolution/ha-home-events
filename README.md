@@ -1,3 +1,5 @@
+<img src="custom_components/home_events/brand/icon.png" alt="Home Events" width="112" align="right">
+
 # Home Events
 
 [![hacs](https://img.shields.io/badge/HACS-custom-orange.svg)](https://hacs.xyz/docs/faq/custom_repositories/)

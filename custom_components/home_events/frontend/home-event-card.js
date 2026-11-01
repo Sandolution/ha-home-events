@@ -391,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-10-30a";
+const CARD_BUILD = "0.2.0";
 
 /* ------------------------------------------------------------------ config */
 
