@@ -391,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "0.2.0";
+const CARD_BUILD = "0.3.0";
 
 /* ------------------------------------------------------------------ config */
 
@@ -418,7 +418,8 @@ const GENERIC_CATEGORY = "generic";
 /* An event: a name, what it covers, when it applies, and how the row reads.
  * See the doc block at the top for why this is the only such list. */
 const EVENT_KEYS = [
-  "enabled", "category", "group", "include", "exclude", "conditions",
+  "enabled", "category", "group", "entries", "always_group", "include",
+  "exclude", "conditions",
   "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
   "icon_color", "color", "tint",
 ];
@@ -441,20 +442,58 @@ const WORDING_KEYS = ["one", "each", "many"];
 
 /* How a grouping event collapses its rows.
  *
- *   area   one row per room - "3 lights on" under "Kitchen"
- *   all    one row for the lot - "2 playing" under whatever you title it
- *   false  no grouping
+ *   area     one row per room - "3 lights on" under "Kitchen"
+ *   all      one row for the lot - "2 playing" under whatever you title it
+ *   entries  one row per entity, holding a row for each entry in one of its
+ *            list attributes - Device Watch's offline sensor, opened, shows
+ *            the devices it is counting
+ *   false    no grouping
  *
  * `area` was the only behaviour and was never written down anywhere, which is
  * the sort of thing this card keeps finding in itself. It suits lights, where
  * the room is the subject of the sentence. It suits media much less: speakers
  * playing in three rooms is one fact about the house, and three rows saying
  * "1 playing" is the aggregation not aggregating. */
-const GROUP_MODES = [false, true, "area", "all"];
+const GROUP_MODES = [false, true, "area", "all", "entries"];
+/* What `entries:` may say: which attribute holds the list, and which field of
+ * an entry is that row's clock. */
+const ENTRIES_KEYS = ["attribute", "time"];
 
 function groupMode(cfg) {
   if (cfg.group === true) return "area"; // the old spelling
-  return cfg.group === "area" || cfg.group === "all" ? cfg.group : null;
+  return cfg.group === "area" || cfg.group === "all" || cfg.group === "entries"
+    ? cfg.group : null;
+}
+
+/* An entry's own clock, from the field `entries.time` names: a timestamp the
+ * way Home Assistant writes one, or a number of seconds since 1970 (or
+ * milliseconds, when it is too big to be seconds). */
+function entryTime(value) {
+  if (typeof value === "number" && isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  return typeof value === "string" ? parseHassTime(value) : null;
+}
+
+/* What an entry offers a template: `{entry.x}` for every field of an entry
+ * that is a mapping, `{entry}` for one that is plain text or a number. A list
+ * inside an entry reads as its items joined; anything deeper is left out
+ * rather than drawn as "[object Object]". */
+function entryVars(entry) {
+  const out = {};
+  if (isPlainObject(entry)) {
+    for (const [k, v] of Object.entries(entry)) {
+      if (v == null || isPlainObject(v)) continue;
+      if (Array.isArray(v)) {
+        if (v.every((x) => x == null || typeof x !== "object")) out["entry." + k] = v.join(", ");
+        continue;
+      }
+      out["entry." + k] = v;
+    }
+  } else if (entry != null && typeof entry !== "object") {
+    out.entry = entry;
+  }
+  return out;
 }
 
 /* Which renderer an entity gets. Domain knowledge, not configuration: a cover
@@ -1652,6 +1691,8 @@ function temp(v) {
  *   at        epoch ms for the time column
  *   mode      since | until | ago | remaining
  *   entity    what a tap opens
+ *   device    a device id, for a row with no entity of its own: a tap opens
+ *             the device's page instead
  *   tone      optional colour override for climate's cool blue
  *   iconColor optional CSS colour for the icon, from the event's icon_color
  *   color     optional CSS colour for the row's accent, from the event's color
@@ -1669,6 +1710,7 @@ function ev(o) {
     at: o.at || null,
     mode: o.mode || "since",
     entity: o.entity || "",
+    device: o.device || "",
     tone: o.tone || null,
     iconColor: o.iconColor || null,
     color: o.color || null,
@@ -1842,12 +1884,44 @@ class HomeEventCard extends HTMLElement {
       if (e.group !== undefined && GROUP_MODES.indexOf(e.group) === -1) {
         throw new Error(
           `home-event-card: \`group: ${JSON.stringify(e.group)}\` on events.${name} ` +
-            "must be area (one row per room), all (one row for the lot), or " +
-            "false. `true` is the old spelling of area."
+            "must be area (one row per room), all (one row for the lot), " +
+            "entries (a row per entry in a list attribute), or false. `true` " +
+            "is the old spelling of area."
+        );
+      }
+      /* Per entry needs to know which list, and the list is only read per
+       * entry: written anywhere else it would be ignored, which is worse than
+       * being refused. */
+      if (e.group === "entries") {
+        if (!isPlainObject(e.entries) || typeof e.entries.attribute !== "string" ||
+            !e.entries.attribute.trim()) {
+          throw new Error(
+            `home-event-card: events.${name} groups per entry, so it needs ` +
+              "`entries: {attribute: ...}` naming the attribute that holds " +
+              "the list."
+          );
+        }
+        checkKeys(ENTRIES_KEYS, e.entries, `entries on events.${name}`);
+        if (e.entries.time != null && typeof e.entries.time !== "string") {
+          throw new Error(
+            `home-event-card: \`entries.time\` on events.${name} is the name ` +
+              `of a field in each entry. Got ${JSON.stringify(e.entries.time)}.`
+          );
+        }
+      } else if (e.entries !== undefined) {
+        throw new Error(
+          `home-event-card: \`entries\` on events.${name} is only read with ` +
+            "`group: entries`."
+        );
+      }
+      if (e.always_group !== undefined && !groupMode(e)) {
+        throw new Error(
+          `home-event-card: \`always_group\` on events.${name} only means ` +
+            "something on an event that groups."
         );
       }
       for (const [key, want] of [["show_time", "boolean"], ["enabled", "boolean"],
-                                 ["tint", "boolean"]]) {
+                                 ["tint", "boolean"], ["always_group", "boolean"]]) {
         if (e[key] !== undefined && typeof e[key] !== want) {
           throw new Error(
             `home-event-card: \`${key}\` on events.${name} must be true or false. ` +
@@ -2348,6 +2422,7 @@ class HomeEventCard extends HTMLElement {
     if (this._toggled(e)) return;
     const el = this._targetOf(e);
     if (el && el.dataset.entity) this._fireMoreInfo(el.dataset.entity);
+    else if (el && el.dataset.device) this._openDevice(el.dataset.device);
   }
 
   /* A grouped row opens rather than firing more-info, and a section heading
@@ -2445,13 +2520,23 @@ class HomeEventCard extends HTMLElement {
       return;
     }
     const el = this._targetOf(e);
-    if (!el || !el.dataset.entity) return;
+    if (!el) return;
     e.preventDefault();
-    this._fireMoreInfo(el.dataset.entity);
+    if (el.dataset.entity) this._fireMoreInfo(el.dataset.entity);
+    else this._openDevice(el.dataset.device);
   }
 
   _targetOf(e) {
-    return e.composedPath().find((n) => n && n.dataset && n.dataset.entity);
+    return e.composedPath().find((n) => n && n.dataset &&
+      (n.dataset.entity || n.dataset.device));
+  }
+
+  /* A row standing for a device rather than an entity - an entry in Device
+   * Watch's list - opens the device's page, the way the frontend navigates:
+   * push the path, then tell the app the location changed. */
+  _openDevice(deviceId) {
+    history.pushState(null, "", `/config/devices/device/${encodeURIComponent(deviceId)}`);
+    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
   }
 
   _fireMoreInfo(entityId) {
@@ -2695,6 +2780,10 @@ class HomeEventCard extends HTMLElement {
        * half. groupRowEntities has already kept the ones where that is not
        * the case. */
       if (!drawable(st)) continue;
+      if (groupMode(cfg) === "entries") {
+        this._entries(out, name, cfg, id, st);
+        continue;
+      }
       if (groupMode(cfg)) {
         grouped.push(id);
         continue;
@@ -2775,6 +2864,80 @@ class HomeEventCard extends HTMLElement {
       if (kept.length) row.members = kept;
       out.push(ev(row));
     }
+  }
+
+  /* One entity, opened into the entries of one of its list attributes.
+   *
+   * Device Watch's offline sensor counts devices and carries them in
+   * `devices`, each with a name, an area and when it went. Its row used to
+   * say all of them on one line; this draws the sensor as a group and each
+   * device as a row inside it, worded with `{entry.name}` and friends.
+   *
+   * The entity is the group row, the same way a Home Assistant group is: its
+   * own icon and state, and holding it opens the entity. A row inside has no
+   * entity of its own, so tapping it opens what the entry points at - its
+   * `entity_id`, or failing that its device's page.
+   *
+   * Like an area group, one entry is drawn as that entry rather than as a
+   * group with one row in it, unless `always_group` says otherwise. An empty
+   * list is the entity's own row, or with `always_group` a group of none. */
+  _entries(out, name, cfg, id, st) {
+    const hass = this._hass;
+    const spec = cfg.entries || {};
+    const raw = (st.attributes || {})[spec.attribute];
+    const list = Array.isArray(raw) ? raw : [];
+    const asEach = wording(cfg, "each");
+    const asOne = wording(cfg, "one");
+    const member = (entry, index, words) => {
+      const e = this._base(name, cfg, id, st);
+      const vars = entryVars(entry);
+      const plain = !isPlainObject(entry);
+      const title = plain ? entry : entry.name;
+      const area = plain ? null : entry.area;
+      const ref = plain ? "" : entry.entity_id || entry.device_id || entry.id || "";
+      e.key = `${id}:${ref || title || index}`;
+      e.title = title == null ? "" : String(title);
+      e.sub = area ? String(area) : "";
+      e.area = area ? String(area) : null;
+      e.status = "";
+      e.at = spec.time && !plain ? entryTime(entry[spec.time]) : null;
+      e.entity = !plain && entry.entity_id && hass.states[entry.entity_id]
+        ? entry.entity_id : "";
+      e.device = !plain && !e.entity && entry.device_id ? String(entry.device_id) : "";
+      return this._applyConfig(e, words, id, {
+        ...vars, name: e.title, area: e.sub, n: list.length,
+      });
+    };
+
+    if (list.length === 1 && !cfg.always_group) {
+      out.push(ev(member(list[0], 0, asOne)));
+      return;
+    }
+    if (!list.length && !cfg.always_group) {
+      const row = this._decorate(name, asOne, id, st);
+      if (row) out.push(ev(row));
+      return;
+    }
+    const members = list.map((entry, i) => member(entry, i, asEach));
+    const e = this._base(name, cfg, id, st);
+    const fn = RENDERERS[id.slice(0, id.indexOf("."))];
+    if (fn && this[fn](e, cfg, id, st) === false) return;
+    /* The group's clock follows the same rule as a room's: counting up, since
+     * its first entry began; counting down, until its last ends. Only when the
+     * entries carry a clock; otherwise it is the entity's own. */
+    const gmode = (isPlainObject(cfg.time_mode) ? cfg.time_mode.many : cfg.time_mode) ||
+      e.mode;
+    const stamps = members.map((m) => m.at).filter((v) => isFinite(v) && v);
+    if (stamps.length) {
+      const counting = gmode === "until" || gmode === "remaining";
+      e.at = counting ? Math.max(...stamps) : Math.min(...stamps);
+    }
+    const row = this._applyConfig(e, wording(cfg, "many"), id, {
+      name: e.title, area: e.area, n: list.length,
+    });
+    row.key = `${name}:${id}`;
+    if (members.length) row.members = members;
+    out.push(ev(row));
   }
 
   /* The row for one entity: the common shape, then whatever its domain knows,
@@ -2937,7 +3100,7 @@ class HomeEventCard extends HTMLElement {
        * was built as. Nothing is grouping it, nothing is above it saying what
        * it is, and it will be read among rows from every other event on the
        * card - which is the row `one` is the wording for. */
-      if (kept.length === 1) {
+      if (kept.length === 1 && !cfg.always_group) {
         const id = kept[0].key;
         const solo = this._decorate(name, wording(cfg, "one"), id, hass.states[id]);
         out.push(ev(solo || kept[0]));
@@ -3679,7 +3842,7 @@ class HomeEventCard extends HTMLElement {
     const grouped = e.members
       ? ` data-group="${esc(e.key)}" aria-expanded="${open ? "true" : "false"}"`
       : "";
-    const tabbable = e.entity || e.members ? ` tabindex="0" role="button"` : "";
+    const tabbable = e.entity || e.device || e.members ? ` tabindex="0" role="button"` : "";
     /* The one place a second gesture can announce itself. A row that opens on
      * tap and has an entity behind it says so on hover and to a screen
      * reader; nothing else on the card needs telling. */
@@ -3704,7 +3867,9 @@ class HomeEventCard extends HTMLElement {
     return (
       `<div class="ev sev-${e.severity}${tone}${tinted ? " tint" : ""}` +
       `${open ? " open" : ""}"${accent}` +
-      ` data-entity="${esc(e.entity)}"${grouped}${tabbable}${hint}>` +
+      ` data-entity="${esc(e.entity)}"` +
+      (e.device ? ` data-device="${esc(e.device)}"` : "") +
+      `${grouped}${tabbable}${hint}>` +
       /* Inline, because it is this row's colour rather than this card's:
          it has to beat the .sev-* and .tone-* rules, and an inline
          declaration is the one thing that does without !important. */

@@ -22,7 +22,8 @@ from typing import Any
 
 # home-event-card.js: EVENT_KEYS
 EVENT_KEYS = [
-    "enabled", "category", "group", "include", "exclude", "conditions",
+    "enabled", "category", "group", "entries", "always_group", "include",
+    "exclude", "conditions",
     "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
     "icon_color", "color", "tint",
 ]
@@ -72,7 +73,10 @@ def icon_color_ok(value: Any) -> bool:
     return bool(CSS_COLOR.match(written))
 # home-event-card.js: SORT_MODES, how a section orders the rows inside it.
 SORT_MODES = ["recent", "duration", "name"]
-GROUP_MODES = [False, True, "area", "all"]
+GROUP_MODES = [False, True, "area", "all", "entries"]
+# home-event-card.js: ENTRIES_KEYS. Which attribute holds the list, and which
+# field of an entry is that row's clock.
+ENTRIES_KEYS = ["attribute", "time"]
 MATCH_MODES = ["any", "all"]
 # home-event-card.js: CONDITION_KEYS
 CONDITION_KEYS = {
@@ -91,12 +95,12 @@ CONDITION_KEYS = {
 # without anybody having to tidy one up by hand.
 WRITE_ORDER = [
     "include", "exclude", "conditions",
-    "category", "group", "severity", "time_mode", "show_time",
+    "category", "group", "entries", "always_group", "severity", "time_mode", "show_time",
     "title", "detail", "status", "icon", "icon_color", "color", "tint",
     "enabled",
 ]
 
-BOOL_KEYS = ["enabled", "show_time", "tint"]
+BOOL_KEYS = ["enabled", "show_time", "tint", "always_group"]
 TEXT_KEYS = ["category", "title", "detail", "status", "icon", "icon_color",
              "color", "severity", "time_mode"]
 # The two options that take a colour. `icon_color` paints the icon alone;
@@ -286,9 +290,31 @@ def _validate_event(name: str, event: Any) -> None:
 
     if event.get("group") is not None and event["group"] not in GROUP_MODES:
         _fail(f"Group on {where} must be \"area\" (one row per room), \"all\" "
-              f"(one row for the lot) or false, not {event['group']!r}. "
+              f"(one row for the lot), \"entries\" (a row per entry in a list "
+              f"attribute) or false, not {event['group']!r}. "
               '"true" is the old spelling of "area".')
-    grouped = event.get("group") in (True, "area", "all")
+    grouped = event.get("group") in (True, "area", "all", "entries")
+
+    # Per entry needs to know which list, and the list is only read per entry:
+    # written anywhere else it would be ignored, which is worse than refused.
+    entries = event.get("entries")
+    if event.get("group") == "entries":
+        if (not _is_map(entries) or not isinstance(entries.get("attribute"), str)
+                or not entries["attribute"].strip()):
+            _fail(f"{where} groups per entry, so it needs \"entries\" with an "
+                  "\"attribute\" naming the attribute that holds the list.")
+        unknown = [k for k in entries if k not in ENTRIES_KEYS]
+        if unknown:
+            _fail(f"{where}.entries takes \"attribute\" and \"time\", not: "
+                  + ", ".join(unknown) + ".")
+        if entries.get("time") is not None and not isinstance(entries["time"], str):
+            _fail(f"{where}.entries.time is the name of a field in each entry, "
+                  f"but it is {_kind(entries['time'])}.")
+    elif entries is not None:
+        _fail(f"\"entries\" on {where} is only read with \"group: entries\".")
+    if event.get("always_group") is not None and not grouped:
+        _fail(f"\"always_group\" on {where} only means something on an event "
+              "that groups.")
 
     if event.get("severity") is not None and event["severity"] not in SEVERITIES:
         _fail(f"Severity {event['severity']!r} on {where} is not on the scale. "

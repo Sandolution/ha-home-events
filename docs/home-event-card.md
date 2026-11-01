@@ -298,7 +298,9 @@ appended, so that list arranges sections rather than registering them.
 | `exclude` | a filter | none | Which of those to leave out. |
 | `conditions` | a list of conditions, see [conditions](#conditions) | none | And in which state. No conditions means every entity it covers, whatever it is doing. |
 | `category` | a section id | the generic section | Which section the rows go in. An id that isn't in `categories` yet is added as a section. |
-| `group` | `false`, `area` or `all` | `false` | `area` makes one row per room, `all` one row for the lot. `true` is the old spelling of `area`. |
+| `group` | `false`, `area`, `all` or `entries` | `false` | `area` makes one row per room, `all` one row for the lot, `entries` a group per entity with a row for each entry in one of its list attributes (see [A row per entry](#a-row-per-entry)). `true` is the old spelling of `area`. |
+| `entries` | `attribute` and optionally `time` | | **Required** with `group: entries`, refused without it. `attribute` is the attribute holding the list; `time` is the field of an entry that is that row's clock. |
+| `always_group` | `true` or `false` | `false` | Keep the group row when a group holds one thing, instead of drawing that thing on its own. Only on an event that groups. |
 | `severity` | `alert`, `attention`, `active` or `info` | what the card gives that kind of entity, `info` otherwise | The colour of the dot, and where it sorts. |
 | `time_mode` | `since`, `until`, `ago` or `remaining`, or one per kind of row | what the card gives that kind of entity, `since` otherwise | How the row's time reads. On a grouped row it also decides *which* of the group's instants is shown; see below. |
 | `show_time` | `true` or `false` | `true` | Whether the row carries a time at all. |
@@ -429,6 +431,7 @@ friendly name; `{area}` is the room from the registry.
 | `{attr.x}` | Any attribute, by name. |
 | `{state@sensor.other}` | Some other entity's state, not this one's. |
 | `{n}` | How many rows this one stands for, on a grouped event. |
+| `{entry.x}` | A field of the entry a row stands for, with `group: entries`. `{entry}` for a list of plain values. |
 
 A `|` inside the braces runs a replacement on what was read, written as
 `s/pattern/replacement/flags`:
@@ -446,7 +449,12 @@ case conversion. A pattern that will not compile leaves the text alone and says
 so once in the browser console.
 
 The examples on the Event Manager's How tab are checked against this card, so
-copying one gives what the page shows it giving.
+copying one gives what the page shows it giving. The `{…}` button beside Title,
+Detail and Status lists the placeholders this event can use, each with what it
+reads right now, and puts the one you click where the cursor was. A placeholder
+that will read nothing (an attribute none of the covered entities has, an entry
+field no entry has, a name that is not a placeholder) is pointed out under the
+field as you type.
 
 Deliberately not Jinja: a template that needs branching is a template sensor,
 which can be tested in the template editor and reused elsewhere.
@@ -565,6 +573,11 @@ That reads *Ventilation · Bath Room* when one fan is running, and *Ventilation
 · Multiple rooms* with *Bath Room*, *Kitchen*, *Toilet* underneath when three
 are.
 
+A group that turns out to hold one thing is drawn as that thing, worded
+`one`. With `always_group: true` it keeps its group row, worded `many`, so the
+title reads the same for one as for five: *Devices offline*, with the device
+underneath.
+
 **`each` falls back to `one` when it is not written.** For two years there were
 two wordings and a member row took `one`, so every library written before this
 keeps reading exactly as it did.
@@ -661,6 +674,37 @@ What that gets you:
   its lamps and the lamp appears once, inside.
 - `{n}` is how many members are showing, and `one`/`each`/`many` word the row
   and its members as usual.
+
+### A row per entry
+
+Some entities keep a list in an attribute. Device Watch's offline sensor
+counts devices and carries them in `devices`, each with a name, an area and
+when it went offline. `group: entries` opens such a list: the entity is the
+group row, and every entry is a row inside it.
+
+```yaml
+devices_offline:
+  include: {entities: [sensor.system_device_watch_offline]}
+  conditions: [{condition: numeric_state, above: 0}]
+  group: entries
+  entries: {attribute: devices, time: since}
+  always_group: true
+  title: {many: Devices offline}
+  status: {each: Offline, many: "{n}"}
+```
+
+| | |
+|---|---|
+| the group row | the entity itself: its icon and state, and holding it opens the entity |
+| a row inside | titled with the entry's `name` and with its `area` beside it, unless worded otherwise; `{entry.x}` reads any field of it |
+| a tap on a row inside | opens the entry's `entity_id`, or failing that its device's page from `device_id` |
+| `{n}` | how many entries the list holds |
+| time | with `entries.time`, each row's own clock (`since` above), and the group's follows the same rule as a room's: the earliest counting up, the latest counting down |
+
+One entry is drawn as that entry, worded `one`, unless `always_group` keeps
+the group. An empty list is the entity's own row, or with `always_group` a
+group of none. The conditions are asked of the entity, not of the entries:
+they are not entities and have no state.
 
 ### Why a grouped row's detail line is usually empty
 

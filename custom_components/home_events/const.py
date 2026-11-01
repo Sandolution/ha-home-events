@@ -1,7 +1,7 @@
 """Constants for the Home Events panel."""
 
 DOMAIN = "home_events"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # The store holds one library of events, and one is all it holds. Version 1
 # nested it under a "presets" mapping so a wall tablet could draw a different

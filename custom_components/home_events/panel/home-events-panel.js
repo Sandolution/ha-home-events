@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "0.2.0";
+const PANEL_BUILD = "0.3.0";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -98,7 +98,10 @@ const GROUPS = [
   { key: null, label: "No" },
   { key: "area", label: "Per room" },
   { key: "all", label: "One row" },
+  { key: "entries", label: "Per entry" },
 ];
+/* The slots that take placeholders, and so get the {…} list beside them. */
+const TEMPLATE_SLOTS = ["title", "detail", "status"];
 const TIME_MODES = ["since", "until", "ago", "remaining"];
 const DEFAULT_TIME_MODE = "since";
 /* The conditions that hold other conditions. Core's own three, and the card
@@ -221,6 +224,7 @@ const PLACEHOLDERS = [
   ["{attr.friendly_name}", "Kitchen | Ceiling", "the whole name, room and all"],
   ["{state@sensor.other}", "-", "some other entity's state, not this one's"],
   ["{n}", "-", "how many rows this one stands for, on a grouped event"],
+  ["{entry.name}", "-", "a field of the entry this row stands for, grouping per entry"],
 ];
 
 /* Three replacements and what they actually did, on two more invented names
@@ -298,7 +302,23 @@ const HELP = {
     "Grouping makes three kinds of row, read in three places, so Title, " +
     "Detail, Status, Icon, Icon colour and Time can each be set three ways: a " +
     "thing on its own, a thing inside an opened group, and the group's own " +
-    "row. Leave the middle one empty and it reads the same as on its own.",
+    "row. Leave the middle one empty and it reads the same as on its own.\n\n" +
+    "Per entry is for an entity that keeps a list in one of its attributes, " +
+    "like Device Watch's offline sensor and its devices. The entity becomes " +
+    "the group row and every entry in the list a row inside it, worded with " +
+    "{entry.name}, {entry.area} and the other fields of an entry. A tap on " +
+    "an entry opens its entity, or its device's page.",
+  always_group: "A group that turns out to hold one thing is normally drawn " +
+    "as that thing, worded as on its own. Tick this to keep the group's own " +
+    "row for one as well, so the row reads the same whether one thing is " +
+    "going on or five: one title, with what it holds underneath.",
+  entries: "List is the attribute holding the entries. Only attributes that " +
+    "hold a list on the entities this event covers are offered.\n\n" +
+    "Time from is the field of an entry that is that row's clock, such as " +
+    "when a device went offline. Left empty, the rows inside have no time " +
+    "and the group row keeps the entity's own.",
+  placeholders: "Placeholders this event can use, with what each reads right " +
+    "now. Click one to put it where the cursor is.",
   title: "The first line of the row. Left empty, the domain decides - a light " +
     "says its name, an alarm says the panel. {name}, {state} and {attr.x} are " +
     "filled in from the entity.\n\n" +
@@ -1470,6 +1490,7 @@ class HomeEventsPanel extends HTMLElement {
   _reflect() {
     this._recount();
     this._repaintPreview();
+    this._checkPlaceholders();
   }
 
   /* The row, drawn by the card.
@@ -1550,7 +1571,7 @@ class HomeEventsPanel extends HTMLElement {
       non_areas: this._library.non_areas,
       events: { [name]: draft },
     };
-    card.hass = this._hass;
+    card.hass = this._entryHass(draft, sample.ids[0]);
     /* Opened, when there is something to open. Two of the three wordings live
      * inside a group - the row that counts, and the rows it counts - and one
      * of them cannot be checked against a chevron. The card is asked the way
@@ -1570,6 +1591,157 @@ class HomeEventsPanel extends HTMLElement {
     if (say) {
       host.insertAdjacentHTML("beforeend",
         `<div class="hint prevnote">${esc(say)}</div>`);
+    }
+  }
+
+  /* For One on an event grouping per entry: the sample entity holding only
+   * the first of its entries, so the row shows how one entry reads on its own.
+   * Its real first entry, not an invented one. Everything else is the live
+   * house, and Grouped gets the list as it is. */
+  _entryHass(draft, id) {
+    const attr = (draft.entries || {}).attribute;
+    const st = id && this._hass.states[id];
+    const list = st && (st.attributes || {})[attr];
+    if (this._previewMany || this._groupOf(draft) !== "entries" ||
+        !Array.isArray(list) || list.length < 2) return this._hass;
+    return {
+      ...this._hass,
+      states: {
+        ...this._hass.states,
+        [id]: { ...st, attributes: { ...st.attributes, [attr]: list.slice(0, 1) } },
+      },
+    };
+  }
+
+  /* The placeholders this event can use, each with what it reads right now on
+   * the entity the preview is drawn from. Grouped by where they come from:
+   * the row, the entity's attributes, and per entry the entry's fields. */
+  _placeholders(path) {
+    const d = this._draft || {};
+    const ids = this._coveredIds();
+    const states = this._hass.states || {};
+    const role = path.split(".")[1] || "one";
+    const perEntry = this._groupOf(d) === "entries";
+    const attr = (d.entries || {}).attribute;
+    let id = ids[0];
+    if (perEntry && attr) {
+      id = ids.find((x) => (((states[x] || {}).attributes || {})[attr] || []).length) || id;
+    }
+    const st = states[id];
+    const show = (v) => {
+      if (v == null || v === "") return "";
+      const text = Array.isArray(v)
+        ? (v.some((x) => x && typeof x === "object") ? `${v.length} entries` : v.join(", "))
+        : typeof v === "object" ? "…" : String(v);
+      return text.length > 40 ? text.slice(0, 39) + "…" : text;
+    };
+    const list = st && attr ? (st.attributes || {})[attr] : null;
+    const entry = perEntry && Array.isArray(list) && list.length ? list[0] : null;
+    const entryRow = perEntry && role !== "many" && entry != null;
+    const area = st ? this._areaNameOf(id, (this._hass.entities || {})[id] || {}) : "";
+    const row = [
+      ["{name}", entryRow ? (typeof entry === "object" ? entry.name : entry)
+        : st && st.attributes.friendly_name, entryRow ? "the entry's name" : "the friendly name"],
+      ["{area}", entryRow ? (typeof entry === "object" ? entry.area : "") : area,
+        entryRow ? "the entry's area" : "the room it is in"],
+      ["{state}", st && humanise(st.state), "what it is doing, in words"],
+      ["{state.raw}", st && st.state, "the same, as a condition spells it"],
+    ];
+    if (this._groupOf(d)) {
+      row.push(["{n}", perEntry && Array.isArray(list) ? list.length : "",
+        "how many rows the group stands for"]);
+    }
+    /* Every attribute any covered entity has, read on the sample where it has
+     * it: an event over twenty lights should offer what a dimmable one says
+     * even when the sample is a plain switch. */
+    const attrs = new Map();
+    for (const x of [id].concat(ids.slice(0, 50))) {
+      for (const [k, v] of Object.entries((states[x] || {}).attributes || {})) {
+        if (!attrs.has(k)) attrs.set(k, v);
+      }
+    }
+    const attrRows = [...attrs.keys()].sort().map((k) => [`{attr.${k}}`, attrs.get(k), ""]);
+    const groups = [["This row", row]];
+    if (perEntry && attr) {
+      const { fields, plain } = this._entryFields(ids, attr);
+      const sample = entry && typeof entry === "object" ? entry : {};
+      const rows = [...fields.keys()].map((k) => [`{entry.${k}}`, sample[k], ""]);
+      if (plain) rows.unshift(["{entry}", typeof entry !== "object" ? entry : "", "the entry itself"]);
+      groups.push([`Each entry in ${attr}`, rows]);
+    }
+    groups.push(["Attributes", attrRows]);
+    return { groups: groups.map(([h, rows]) => [h, rows.map(([t, v, w]) => [t, show(v), w])]), id };
+  }
+
+  _phMenuHtml(path) {
+    const { groups, id } = this._placeholders(path);
+    return `<div class="phmenu" role="menu">
+      <div class="phhead"${tip("placeholders")}>Reading ${esc(id || "nothing yet")}</div>
+      ${groups.filter(([, rows]) => rows.length).map(([head, rows]) =>
+        `<div class="phgroup">${esc(head)}</div>` + rows.map(([tpl, value, what]) =>
+          `<button class="phitem" role="menuitem" data-act="insertph"
+             data-path="${esc(path)}" data-value="${esc(tpl)}"${what ? ` title="${esc(what)}"` : ""}>
+             <code>${esc(tpl)}</code><span class="dim">${esc(value || "-")}</span></button>`)
+          .join("")).join("")}
+    </div>`;
+  }
+
+  /* A placeholder that will read nothing, said under its field while it is
+   * being typed: an attribute none of the covered entities has, an entry
+   * field no entry has, a name that is not a placeholder at all. The card
+   * draws all three as nothing, which is the hardest kind of mistake to see
+   * on a dashboard. */
+  _checkPlaceholders() {
+    const pane = this._el && this._el.pane;
+    if (!pane) return;
+    const boxes = pane.querySelectorAll("[data-phwarn]");
+    if (!boxes.length) return;
+    const d = this._draft || {};
+    const ids = this._coveredIds();
+    const states = this._hass.states || {};
+    const has = new Set();
+    for (const id of ids) {
+      for (const k of Object.keys((states[id] || {}).attributes || {})) has.add(k);
+    }
+    const perEntry = this._groupOf(d) === "entries";
+    const attr = (d.entries || {}).attribute;
+    const entry = perEntry && attr ? this._entryFields(ids, attr) : null;
+    for (const box of boxes) {
+      const v = d[box.dataset.phwarn];
+      const texts = v && typeof v === "object" ? Object.values(v) : [v];
+      const bad = [];
+      for (const text of texts) {
+        if (typeof text !== "string") continue;
+        for (const m of text.matchAll(/\{([^}]+)\}/g)) {
+          const expr = m[1];
+          const cut = expr.indexOf("|");
+          const [path, target] = (cut === -1 ? expr : expr.slice(0, cut)).split("@");
+          const p = path.trim();
+          const t = (target || "").trim();
+          let why = "";
+          if (t && !states[t]) why = `there is no entity ${t}`;
+          else if (["name", "area", "state", "state.raw", "n"].indexOf(p) !== -1) why = "";
+          else if (p.startsWith("attr.")) {
+            const a = p.slice(5);
+            const known = t ? a in ((states[t] || {}).attributes || {}) : has.has(a);
+            if (!known && (t || ids.length)) {
+              why = t ? `${t} has no attribute ${a}`
+                : `none of the entities this event covers has an attribute ${a}`;
+            }
+          } else if (p === "entry" || p.startsWith("entry.")) {
+            if (!perEntry) why = "entries are only read when the event groups per entry";
+            else if (p === "entry" ? entry && !entry.plain && entry.fields.size
+                     : entry && !entry.fields.has(p.slice(6)) && (entry.fields.size || entry.plain)) {
+              why = p === "entry" ? `the entries in ${attr} have fields, so name one`
+                : `no entry in ${attr} has a field ${p.slice(6)}`;
+            }
+          } else why = "that is not a placeholder";
+          if (why) bad.push(`{${expr}}: ${why}`);
+        }
+      }
+      const html = bad.length
+        ? [...new Set(bad)].map((b) => `<div>${esc(b)}</div>`).join("") : "";
+      if (box.innerHTML !== html) box.innerHTML = html;
     }
   }
 
@@ -1627,7 +1799,7 @@ class HomeEventsPanel extends HTMLElement {
     }
     ids = ids.slice().sort();
     if (!ids.length) return { ids: [] };
-    if (!this._previewMany) return { ids: [ids[0]] };
+    if (!this._previewMany && this._groupOf(draft) !== "entries") return { ids: [ids[0]] };
     if (this._groupOf(draft) === "area") {
       /* The whole of one room, not a handful of it: the card is going to fold
        * these into a single row and put a number on it, and a number that is
@@ -1642,12 +1814,22 @@ class HomeEventsPanel extends HTMLElement {
       return { ids: [...byArea.values()].sort((a, b) => b.length - a.length)[0] };
     }
     if (this._groupOf(draft) === "all") return { ids };
+    if (this._groupOf(draft) === "entries") {
+      /* One entity, holding the list: the one with the most entries, so
+       * Grouped has something to open. */
+      const attr = (draft.entries || {}).attribute;
+      const size = (id) => {
+        const v = ((this._hass.states[id] || {}).attributes || {})[attr];
+        return Array.isArray(v) ? v.length : 0;
+      };
+      return { ids: [ids.slice().sort((a, b) => size(b) - size(a))[0]] };
+    }
     return { ids: ids.slice(0, PREVIEW_MANY) };
   }
 
   _formHtml() {
     const d = this._draft || {};
-    const grouped = d.group === true || d.group === "area" || d.group === "all";
+    const grouped = !!this._groupOf(d);
     const cats = this._categories().filter((c) => c !== GENERIC_CATEGORY);
     const sub = this._sub || "what";
     /* What each one has in it, on the tab itself.
@@ -1736,13 +1918,17 @@ class HomeEventsPanel extends HTMLElement {
            </div>
          </div>
 
-         <div class="field"><div class="label"${tip("group")}>Group</div>
+         <div class="field"><div class="label"${tip("group")}>Group</div><div>
            <div class="seg" role="radiogroup" aria-label="Group">${GROUPS.map((g) =>
              `<button data-set="group" data-value="${esc(g.key || "")}" role="radio"` +
              ` aria-checked="${this._groupOf(d) === g.key}"` +
              `${this._groupOf(d) === g.key ? ' class="on"' : ""}>${esc(g.label)}</button>`).join("")}
            </div>
-         </div>
+           ${grouped ? `<label class="check groupone"${tip("always_group")}><input type="checkbox"
+               data-set="always_group" ${d.always_group ? "checked" : ""}>
+               Keep the group row for a single entry</label>` : ""}
+         </div></div>
+         ${this._groupOf(d) === "entries" ? this._entriesHtml(d) : ""}
 
          ${TEXT_SLOTS.map((slot) => this._slotHtml(slot, d, grouped)).join("")}
 
@@ -1858,7 +2044,98 @@ it are underneath it">Grouped</button>
   _groupOf(d) {
     if (d.group === true || d.group === "area") return "area";
     if (d.group === "all") return "all";
+    if (d.group === "entries") return "entries";
     return null;
+  }
+
+  /* What this event covers, before conditions: the entities whose attributes
+   * the List and the placeholders can be about. */
+  _coveredIds() {
+    const d = this._draft || {};
+    const include = d.include;
+    if (!this._engine || !include || !Object.keys(include).some(
+      (k) => k !== "match" && (include[k] || []).length)) return [];
+    try {
+      return this._engine.matchEntities(this._hass, {
+        include: clone(include),
+        exclude: d.exclude ? clone(d.exclude) : null,
+        registries: { labels: this._reg.labels, floors: this._reg.floors },
+      }).slice().sort();
+    } catch (err) {
+      return [];
+    }
+  }
+
+  /* The attributes that hold a list on the covered entities, in the order
+   * they are first met, with the first entity's list for each. */
+  _listAttributes(ids) {
+    const out = new Map();
+    for (const id of ids) {
+      const a = ((this._hass.states || {})[id] || {}).attributes || {};
+      for (const [k, v] of Object.entries(a)) {
+        if (Array.isArray(v) && !out.has(k) && k !== "entity_id") out.set(k, v);
+      }
+    }
+    return out;
+  }
+
+  /* The fields an entry has, across every entry of that list on every covered
+   * entity, so a field only some entries carry is still offered. */
+  _entryFields(ids, attribute) {
+    const fields = new Map();
+    let plain = false;
+    for (const id of ids) {
+      const list = ((((this._hass.states || {})[id] || {}).attributes || {})[attribute]);
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          for (const [k, v] of Object.entries(entry)) {
+            if (!fields.has(k) && v != null && typeof v !== "object") fields.set(k, v);
+            else if (!fields.has(k)) fields.set(k, null);
+          }
+        } else if (entry != null) {
+          plain = true;
+        }
+      }
+    }
+    return { fields, plain };
+  }
+
+  /* List and Time from, for an event grouping per entry. Chosen from what the
+   * covered entities actually carry, because an attribute name typed from
+   * memory is the easiest thing here to get wrong. */
+  _entriesHtml(d) {
+    const ids = this._coveredIds();
+    const lists = this._listAttributes(ids);
+    const spec = d.entries || {};
+    const attr = spec.attribute || "";
+    const opt = (value, label, on) =>
+      `<option value="${esc(value)}"${on ? " selected" : ""}>${esc(label)}</option>`;
+    const attrs = [...lists.keys()];
+    if (attr && attrs.indexOf(attr) === -1) attrs.push(attr);
+    const { fields } = attr ? this._entryFields(ids, attr) : { fields: new Map() };
+    const keys = [...fields.keys()];
+    const time = spec.time || "";
+    if (time && keys.indexOf(time) === -1) keys.push(time);
+    const none = !attrs.length
+      ? `<div class="hint">None of the entities this event covers has an
+          attribute holding a list right now.</div>` : "";
+    return `<div class="field"><div class="label"${tip("entries")}>List</div>
+      <div><div class="inline">
+        <select data-set="entries.attribute">
+          ${attr ? "" : opt("", "Choose an attribute…", true)}
+          ${attrs.map((k) => {
+            const list = lists.get(k);
+            const n = list ? ` (${list.length} now)` : "";
+            return opt(k, k + n, k === attr);
+          }).join("")}
+        </select>
+        <label class="check">Time from
+          <select data-set="entries.time"${attr ? "" : " disabled"}>
+            ${opt("", "-", !time)}
+            ${keys.map((k) => opt(k, k, k === time)).join("")}
+          </select></label>
+      </div>${none}</div></div>`;
   }
 
   /* A slot is one piece of text, until the event groups and the slot is one
@@ -1875,6 +2152,14 @@ it are underneath it">Grouped</button>
     const field = (path, current, hint) => {
       if (COLOUR_SLOTS.indexOf(slot.key) !== -1) {
         return this._colourHtml(path, current, hint || slot.hint, d);
+      }
+      if (TEMPLATE_SLOTS.indexOf(slot.key) !== -1) {
+        return `<div class="phfield">
+            <input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
+                   placeholder="${esc(hint || slot.hint)}" spellcheck="false">
+            <button class="phbtn" data-act="phmenu" data-path="${path}"
+                    ${named("Placeholders")}>{…}</button>
+          </div>`;
       }
       if (!icons) {
         return `<input data-set="${path}" value="${esc(typeof current === "string" ? current : "")}"
@@ -1911,9 +2196,11 @@ it are underneath it">Grouped</button>
           ? "Use one wording everywhere"
           : "Word it differently for a group") + `</button>`
       : "";
+    const warn = TEMPLATE_SLOTS.indexOf(slot.key) !== -1
+      ? `<div class="phwarn" data-phwarn="${slot.key}"></div>` : "";
     return `<div class="field"><div class="label"${tip(slot.key)}>` +
       `${esc(slot.label)}</div>` +
-      `<div>${body}${toggle}</div></div>`;
+      `<div>${body}${warn}${toggle}</div></div>`;
   }
 
   /* A colour is chosen from what there is rather than typed. There are two
@@ -2694,6 +2981,10 @@ it are underneath it">Grouped</button>
      * inside Home Assistant's own chooser never reach here - it draws its list
      * outside this shadow root - so this only sees clicks on the form itself. */
     const path = e.composedPath();
+    /* An open {…} list goes on any click that is not inside its field. */
+    if (!path.some((n) => n && n.classList && n.classList.contains("phfield"))) {
+      this._el.pane.querySelectorAll(".phmenu").forEach((m) => m.remove());
+    }
     if (this._editing && !path.some((n) => n && n.classList &&
         (n.classList.contains("inlineslot") || n.classList.contains("val")))) {
       /* Leaving a field commits it - otherwise clicking Save with a word still
@@ -2762,6 +3053,29 @@ it are underneath it">Grouped</button>
         if (!Object.keys(f).length) delete this._draft[el.dataset.side];
         this._setDirty(true);
         return this._renderPane();
+      }
+      case "phmenu": {
+        const host = el.closest(".phfield");
+        const open = host && host.querySelector(".phmenu");
+        this._el.pane.querySelectorAll(".phmenu").forEach((m) => m.remove());
+        if (host && !open) host.insertAdjacentHTML("beforeend", this._phMenuHtml(el.dataset.path));
+        return;
+      }
+      case "insertph": {
+        const path = el.dataset.path;
+        const input = this._el.pane.querySelector(`input[data-set="${path}"]`);
+        this._el.pane.querySelectorAll(".phmenu").forEach((m) => m.remove());
+        if (!input) return;
+        /* Where the cursor was when the list was opened: an input keeps its
+         * selection when it loses the focus. */
+        const start = input.selectionStart == null ? input.value.length : input.selectionStart;
+        const end = input.selectionEnd == null ? start : input.selectionEnd;
+        const text = el.dataset.value;
+        input.value = input.value.slice(0, start) + text + input.value.slice(end);
+        this._set(path, input.value, input);
+        input.focus();
+        input.setSelectionRange(start + text.length, start + text.length);
+        return;
       }
       case "plural": {
         const key = el.dataset.value;
@@ -2962,7 +3276,28 @@ it are underneath it">Grouped</button>
       else delete d.tint;
     } else if (path === "group") {
       if (value) d.group = value; else delete d.group;
+      if (!value) delete d.always_group;
+      if (value !== "entries") delete d.entries;
+      else if (!(d.entries && d.entries.attribute)) {
+        /* The first list there is, when there is one: an event about Device
+         * Watch's sensor has exactly one, and asking for it would be a
+         * question with one answer. */
+        const first = [...this._listAttributes(this._coveredIds()).keys()][0];
+        if (first) d.entries = { attribute: first };
+      }
       structural = true; // the wording slots depend on it
+    } else if (path === "always_group") {
+      if (value === true) d.always_group = true; else delete d.always_group;
+    } else if (path === "entries.attribute" || path === "entries.time") {
+      const spec = d.entries || (d.entries = {});
+      const key = path.slice(8);
+      if (value) spec[key] = value; else delete spec[key];
+      /* A clock field belongs to the list it was chosen from. */
+      if (key === "attribute" && spec.time &&
+          !this._entryFields(this._coveredIds(), value).fields.has(spec.time)) {
+        delete spec.time;
+      }
+      structural = true;
     } else if (path === "show_time") {
       if (value === false) d.show_time = false; else delete d.show_time;
       structural = true;
@@ -3584,6 +3919,31 @@ textarea.yaml {
 }
 
 .pair { display: grid; gap: 6px; }
+/* A text slot with its {…} list. The list hangs under the field, over what
+   follows, and goes on the next click anywhere. */
+.phfield { position: relative; display: flex; gap: 4px; align-items: center; min-width: 0; }
+.phfield > input { flex: 1; min-width: 0; box-sizing: border-box; }
+.phbtn { flex: none; font-family: var(--code-font-family, monospace); font-size: 12px;
+  padding: 5px 7px; border-radius: 6px; color: var(--secondary-text-color);
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3)); background: none; }
+.phbtn:hover { color: var(--primary-color); border-color: var(--primary-color); }
+.phmenu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10;
+  width: min(420px, 90vw); max-height: 340px; overflow: auto; padding: 6px 0;
+  background: var(--card-background-color, #fff); border-radius: 8px;
+  border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+  box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.phhead { padding: 4px 12px 6px; font-size: 12px; color: var(--secondary-text-color); }
+.phgroup { padding: 8px 12px 2px; font-size: 11px; font-weight: 500;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--secondary-text-color); }
+.phitem { display: flex; width: 100%; gap: 12px; justify-content: space-between;
+  padding: 5px 12px; text-align: left; background: none; border: 0; border-radius: 0;
+  color: var(--primary-text-color); font-size: 13px; }
+.phitem:hover, .phitem:focus-visible { background: rgba(127,127,127,.12); }
+.phitem code { white-space: nowrap; }
+.phitem .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.phwarn { font-size: 12px; color: var(--warning-color, #ffa600); line-height: 1.5; }
+.phwarn:not(:empty) { padding-top: 4px; }
+.groupone { display: flex; margin-top: 8px; font-size: 13px; }
 /* Wide enough for "inside a group" on one line: the labels are the only thing
    saying which row each box is about, and one wrapping onto two lines pushes
    its own field out of line with the others. */

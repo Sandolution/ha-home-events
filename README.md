@@ -113,8 +113,12 @@ events:
     time_mode: ago
 ```
 
+An event can also group its rows: one per room, one for the lot, or one per
+entry in an entity's list attribute, so a sensor that counts things opens into
+a row for each of them.
+
 The panel writes this for you. The full format (every key of an event, the
-filters, the conditions, wording per kind of row, colours) is in
+filters, the conditions, grouping, wording per kind of row, colours) is in
 [docs/home-event-card.md](docs/home-event-card.md#the-library), as is what the
 card exports for other code.
 
