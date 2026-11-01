@@ -391,7 +391,7 @@
  * counted, underneath itself, indented under the title.
  */
 
-const CARD_BUILD = "2026-10-09a";
+const CARD_BUILD = "2026-10-30a";
 
 /* ------------------------------------------------------------------ config */
 
@@ -420,7 +420,7 @@ const GENERIC_CATEGORY = "generic";
 const EVENT_KEYS = [
   "enabled", "category", "group", "include", "exclude", "conditions",
   "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
-  "icon_color",
+  "icon_color", "color", "tint",
 ];
 
 /* Slots a grouped event may word two ways, because a row that counts has to
@@ -431,7 +431,12 @@ const EVENT_KEYS = [
 /* The options that take a wording per kind of row, rather than one value for
  * every row the event draws. See `wording()`. */
 const PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
-                     "time_mode"];
+                     "color", "time_mode"];
+/* The two options that take a colour. `icon_color` paints the icon and
+ * nothing else; `color` is the row's accent - icon, status word and tint -
+ * standing in for what its severity would have painted. Same values, same
+ * table, same check. */
+const COLOUR_KEYS = ["icon_color", "color"];
 const WORDING_KEYS = ["one", "each", "many"];
 
 /* How a grouping event collapses its rows.
@@ -1649,6 +1654,8 @@ function temp(v) {
  *   entity    what a tap opens
  *   tone      optional colour override for climate's cool blue
  *   iconColor optional CSS colour for the icon, from the event's icon_color
+ *   color     optional CSS colour for the row's accent, from the event's color
+ *   tint      true/false to tint the row's background, null for "alerts only"
  */
 function ev(o) {
   return {
@@ -1664,6 +1671,8 @@ function ev(o) {
     entity: o.entity || "",
     tone: o.tone || null,
     iconColor: o.iconColor || null,
+    color: o.color || null,
+    tint: typeof o.tint === "boolean" ? o.tint : null,
     area: o.area || null,
     members: o.members || null,
   };
@@ -1814,14 +1823,14 @@ class HomeEventCard extends HTMLElement {
        * not at paint time: an icon that quietly kept its old colour is the
        * hardest kind of typo to find, and the panel refuses the same value
        * with the same reasoning before it is ever written. */
-      {
-        const written = e.icon_color;
+      for (const key of COLOUR_KEYS) {
+        const written = e[key];
         for (const value of isPlainObject(written) ? Object.values(written)
                                                    : [written]) {
           if (value == null || value === "") continue; // nothing written
           if (iconColorCss(value)) continue;
           throw new Error(
-            `home-event-card: \`icon_color\` on events.${name} is ` +
+            `home-event-card: \`${key}\` on events.${name} is ` +
               `${JSON.stringify(value)}, which is not a colour. Write one of ` +
               `${SEVERITIES.join(", ")}, heat or cool - the colours the card ` +
               "paints by itself - or a Home Assistant palette name " +
@@ -1837,7 +1846,8 @@ class HomeEventCard extends HTMLElement {
             "false. `true` is the old spelling of area."
         );
       }
-      for (const [key, want] of [["show_time", "boolean"], ["enabled", "boolean"]]) {
+      for (const [key, want] of [["show_time", "boolean"], ["enabled", "boolean"],
+                                 ["tint", "boolean"]]) {
         if (e[key] !== undefined && typeof e[key] !== want) {
           throw new Error(
             `home-event-card: \`${key}\` on events.${name} must be true or false. ` +
@@ -2390,6 +2400,10 @@ class HomeEventCard extends HTMLElement {
     const row = e.composedPath().find((n) => n && n.dataset && n.dataset.group);
     if (!row || !row.dataset.entity) return;
     this._holdStop();
+    /* A hold whose finger lifted off the card never produced the click that
+     * clears this, and the next tap anywhere was then swallowed. A new press
+     * is a new gesture. */
+    this._held = false;
     this._holdAt = { x: e.clientX || 0, y: e.clientY || 0 };
     this._holdTimer = window.setTimeout(() => {
       this._holdTimer = null;
@@ -2804,6 +2818,15 @@ class HomeEventCard extends HTMLElement {
       const css = iconColorCss(cfg.icon_color);
       if (css) e.iconColor = css;
     }
+    /* The row's accent, where the severity's colour would have gone. The
+     * severity still decides where the row sorts and whether a card promotes
+     * it; this only decides what it looks like - an alert about the litter box
+     * need not be the same red as a smoke alarm. */
+    if (said(cfg.color)) {
+      const css = iconColorCss(cfg.color);
+      if (css) e.color = css;
+    }
+    if (typeof cfg.tint === "boolean") e.tint = cfg.tint;
     if (cfg.severity) e.severity = cfg.severity;
     if (cfg.time_mode) e.mode = cfg.time_mode;
     if (cfg.show_time === false) e.at = null;
@@ -3318,7 +3341,8 @@ class HomeEventCard extends HTMLElement {
       /* Countdowns run the other way round from durations: a timer with four
        * minutes left and the next calendar entry are both "the next thing to
        * happen", so soonest wins regardless of the configured sort. */
-      if (a.mode === "until" && b.mode === "until") {
+      const down = (m) => m === "until" || m === "remaining";
+      if (down(a.mode) && down(b.mode)) {
         return (a.at || Infinity) - (b.at || Infinity);
       }
       if (mode === "name") return a.title.localeCompare(b.title);
@@ -3360,10 +3384,19 @@ class HomeEventCard extends HTMLElement {
      * way, so opening one section takes nothing from any other - it only draws
      * what this one was already known to be holding back. */
     for (const s of sections) s.all = s.events;
+    /* Which section is never trimmed: the one alerts are promoted into, or
+     * the alert bucket itself under group_by: severity. By id, not by the
+     * word "alerts" - a card that promotes into "urgent" was trimming it. */
+    const by = this._config.group_by;
+    const promoteTo = this._config.promote_alerts === true
+      ? "alerts" : this._config.promote_alerts;
+    const fixedId = (s) =>
+      s.id === "alerts" || (by === "severity" && s.id === "alert") ||
+      (by === "category" && !!promoteTo && s.id === promoteTo);
     const perSection = this._config.max_per_section;
     if (perSection) {
       for (const s of sections) {
-        if (s.id === "alerts") continue;
+        if (fixedId(s)) continue;
         if (s.events.length <= perSection) continue;
         s.over = (s.over || 0) + s.events.length - perSection;
         s.events = s.events.slice(0, perSection);
@@ -3376,8 +3409,8 @@ class HomeEventCard extends HTMLElement {
     for (const s of sections) total += s.events.length;
     if (total <= max) return sections;
 
-    const fixed = sections.filter((s) => s.id === "alerts");
-    const share = sections.filter((s) => s.id !== "alerts" && s.events.length);
+    const fixed = sections.filter(fixedId);
+    const share = sections.filter((s) => !fixedId(s) && s.events.length);
     let left = max;
     for (const s of fixed) left -= s.events.length;
 
@@ -3423,7 +3456,7 @@ class HomeEventCard extends HTMLElement {
     }
     /* A section the budget could not reach at all: no heading, no count, no
      * row. There is nothing honest to draw for it. */
-    return sections.filter((s) => s.events.length || s.id === "alerts");
+    return sections.filter((s) => s.events.length || fixedId(s));
   }
 
   _sections(events) {
@@ -3532,7 +3565,7 @@ class HomeEventCard extends HTMLElement {
      * on the card happened to move. Members are signed the same way because
      * _membersHtml draws them through the same _row. */
     const sign = (e) => [e.key, e.severity, e.title, e.sub, e.status, e.at,
-                         e.tone, e.icon, e.iconColor, e.mode];
+                         e.tone, e.icon, e.iconColor, e.color, e.tint, e.mode];
     const sig = JSON.stringify([
       this._config.group_by,
       events.map((e) => [sign(e), e.members ? e.members.map(sign) : 0]),
@@ -3651,6 +3684,12 @@ class HomeEventCard extends HTMLElement {
      * tap and has an entity behind it says so on hover and to a screen
      * reader; nothing else on the card needs telling. */
     const hint = e.members && e.entity ? ` title="${esc(text.hold)}"` : "";
+    /* The accent as a custom property on the row, so one declaration reaches
+     * the icon, the status word and the tint through the .sev-* rules below -
+     * which read --ev-color first and fall back to the severity's own. */
+    const accent = e.color ? ` style="--ev-color:${esc(e.color)}"` : "";
+    /* Alerts are tinted unless told otherwise; anything else only when asked. */
+    const tinted = e.tint === true || (e.tint !== false && e.severity === "alert");
     /* The caret belongs to the name, not to the edge of the card. It sits
      * right after the title, inside the column the title already has, so a
      * long name gives way to it rather than the other way round. */
@@ -3663,7 +3702,8 @@ class HomeEventCard extends HTMLElement {
       `</div>`;
 
     return (
-      `<div class="ev sev-${e.severity}${tone}${open ? " open" : ""}"` +
+      `<div class="ev sev-${e.severity}${tone}${tinted ? " tint" : ""}` +
+      `${open ? " open" : ""}"${accent}` +
       ` data-entity="${esc(e.entity)}"${grouped}${tabbable}${hint}>` +
       /* Inline, because it is this row's colour rather than this card's:
          it has to beat the .sev-* and .tone-* rules, and an inline
@@ -3955,21 +3995,27 @@ const STYLES = `
    Colour carries urgency and nothing else. The icon takes the hue; only alert
    tints its whole row, because that is the one state that should break the
    scan rather than reward it. */
-.sev-active .ic    { color: var(--success-color, var(--green-color, #5cb87f)); }
-.sev-attention .ic { color: var(--warning-color, var(--amber-color, #d8a24e)); }
-.sev-attention .st { color: var(--warning-color, var(--amber-color, #d8a24e)); }
-.sev-alert .ic     { color: var(--error-color, var(--red-color, #d8574a)); }
-.sev-alert .st     { color: var(--error-color, var(--red-color, #d8574a)); }
-.sev-alert {
-  background: color-mix(in srgb, var(--error-color, var(--red-color, #d8574a)) 9%, transparent);
-}
-.sev-info .ic      { color: var(--secondary-text-color); }
-
+/* Each severity sets the row's colour as a variable, and the icon, the status
+   word and the tint read it through --ev-color - which an event's color:
+   sets inline on the row and nothing else does. So "an alert, but amber" is
+   one declaration rather than three overrides, and a row that says nothing
+   about its colour reads exactly as it always has. */
+.ev.sev-alert     { --sev-color: var(--error-color, var(--red-color, #d8574a)); }
+.ev.sev-attention { --sev-color: var(--warning-color, var(--amber-color, #d8a24e)); }
+.ev.sev-active    { --sev-color: var(--success-color, var(--green-color, #5cb87f)); }
+.ev.sev-info      { --sev-color: var(--secondary-text-color); }
 /* Climate is the single domain that keeps a colour of its own: heat and cold
    are not degrees of urgency, and reading "Cooling" to find out which way the
    house is going defeats the point of a glance panel. */
-.tone-heat .ic { color: var(--state-climate-heat-color, var(--amber-color, #d8a24e)); }
-.tone-cool .ic { color: var(--state-climate-cool-color, var(--blue-color, #5f9ede)); }
+.ev.tone-heat { --sev-color: var(--state-climate-heat-color, var(--amber-color, #d8a24e)); }
+.ev.tone-cool { --sev-color: var(--state-climate-cool-color, var(--blue-color, #5f9ede)); }
+.ev .ic { color: var(--ev-color, var(--sev-color)); }
+/* The status word carries the colour only where the colour is a warning;
+   active and info keep it in the text colour, as they always did. */
+.sev-attention .st, .sev-alert .st { color: var(--ev-color, var(--sev-color)); }
+/* Alerts are tinted by default and nothing else is; tint: on the event
+   turns it on or off for that event - see _row. */
+.ev.tint { background: color-mix(in srgb, var(--ev-color, var(--sev-color)) 9%, transparent); }
 
 .empty {
   font-size: var(--ha-font-size-s, 12px);

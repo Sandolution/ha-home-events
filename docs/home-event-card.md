@@ -299,6 +299,8 @@ appended, so that list arranges sections rather than registering them.
 | `show_time` | Whether the row carries a time at all. |
 | `title` `detail` `status` `icon` | How the row reads. See below. |
 | `icon_color` | What the icon is coloured, instead of what its severity would have coloured it. See below. |
+| `color` | The row's colour - icon, status word and tint - instead of what its severity would have painted. See below. |
+| `tint` | `true` or `false`: whether the row's background is tinted. Left out, alerts are and nothing else is. |
 | `enabled` | `false` keeps the event in the library and draws it on no card. |
 
 ### include and exclude
@@ -474,11 +476,36 @@ A bare word that is not one of the names is refused rather than accepted:
 CSS has 148 colour keywords, and a typo among them is an icon that quietly
 keeps the colour it had, which is the hardest kind of mistake to find.
 
+### What colour the row is
+
+Severity decides two different things: how loud a row is - where it sorts,
+whether a card promotes it into *Needs attention* - and what it looks like.
+`color` separates the two. It takes the same values as `icon_color` and paints
+the row's accent with them: the icon, the status word where the severity would
+have coloured it, and the tint on a tinted row.
+
+```yaml
+litter_box:
+  include: {entities: [binary_sensor.dining_room_litter_box_stuck]}
+  conditions: [{condition: state, state: "on"}]
+  severity: alert       # still first, still promoted
+  color: deep-purple    # but not the same red as the smoke alarm
+```
+
+`icon_color` still wins for the icon alone, so an event may have a purple row
+with an amber icon in it. Like `icon_color`, `color` may be worded per kind of
+row on a grouping event (`{one, each, many}`).
+
+`tint` is the row's background. Alerts are tinted and nothing else is; that is
+the default and it is deliberate - a tint is the one thing that breaks the scan
+rather than rewarding it. `tint: true` tints an event's rows whatever their
+severity, in the row's colour; `tint: false` leaves an alert untinted.
+
 ### Three kinds of row, three wordings
 
 Grouping draws three different rows, and they are read in three different
-places. So `title`, `detail`, `status`, `icon`, `icon_color` and `time_mode`
-may each be set once per kind:
+places. So `title`, `detail`, `status`, `icon`, `icon_color`, `color` and
+`time_mode` may each be set once per kind:
 
 | key | the row it words |
 |---|---|

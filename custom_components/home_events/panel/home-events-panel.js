@@ -24,7 +24,7 @@
  * about a card that is wrong.
  */
 
-const PANEL_BUILD = "2026-08-23g";
+const PANEL_BUILD = "2026-10-30a";
 
 /* The seven ways of naming a set of entities, most specific first - which is
  * the order the card's own ladder ranks them in, and the order somebody
@@ -109,7 +109,7 @@ const GROUP_KINDS = ["and", "or", "not"];
  * Grouping makes three - a single thing on its own, a member of an open group,
  * and the group itself - and they are read in three different places. */
 const PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
-                     "time_mode"];
+                     "color", "time_mode"];
 /* The card's WORDING_KEYS, with what each is called on the form. `each` falls
  * back to `one` when it is left empty, which is what every config written
  * before there was a third wording relies on. */
@@ -135,8 +135,23 @@ const TEXT_SLOTS = [
   { key: "detail", label: "Detail", hint: "Usually the room" },
   { key: "status", label: "Status", hint: "The domain's own wording" },
   { key: "icon", label: "Icon", hint: "mdi:…" },
-  { key: "icon_color", label: "Icon colour", hint: "As the severity says" },
+  { key: "icon_color", label: "Icon colour", hint: "As the colour says" },
+  { key: "color", label: "Colour", hint: "As the severity says" },
 ];
+/* The two slots that take a colour rather than text. */
+const COLOUR_SLOTS = ["icon_color", "color"];
+/* Whether a row's background is tinted. Three answers, and the first is the
+ * rule the card has always had: alerts are, nothing else is. */
+const TINTS = [
+  ["", "Alerts only (default)"],
+  ["true", "Yes"],
+  ["false", "No"],
+];
+/* How wide the list on the left is, remembered per browser. A width is a
+ * preference rather than a reading position - unlike which group is open -
+ * so it is the one thing on this page that survives a reload. */
+const SIDE_WIDTH_KEY = "home-events-panel:side-width";
+const SIDE_MIN = 200;
 
 /* What a new event starts as.
  *
@@ -319,6 +334,18 @@ const HELP = {
     "telling two quiet events apart, not a second severity scale.\n\n" +
     "The dot beside this event in the list is that icon, shrunk - so it " +
     "follows this rather than Severity once something is chosen here.",
+  color: "The row's colour, in place of what its severity would have painted: " +
+    "the icon, the status word and - on a tinted row - the tint. The six " +
+    "names first are the card's own colours; the rest is Home Assistant's " +
+    "palette, which follows the theme.\n\n" +
+    "Severity still decides where the row sorts and whether a card promotes " +
+    "it into Needs attention. This only decides how it looks, so an alert " +
+    "about the litter box need not be the same red as one about smoke. Icon " +
+    "colour, above, overrides this for the icon alone.",
+  tint: "Whether the row's background is tinted with its colour. Left alone, " +
+    "alerts are and nothing else is - the one state that should break the " +
+    "scan rather than reward it. Yes tints this event's rows whatever their " +
+    "severity; No leaves an alert untinted.",
   time: "Whether the row carries a time, and which way it runs: since and ago " +
     "count up from the last change, until and remaining count down to what is " +
     "next.\n\n" +
@@ -379,11 +406,13 @@ const tip = (key) => (HELP[key] ? ` title="${esc(HELP[key])}"` : "");
  * them in the order the form asks for them and uses the first that says
  * anything. `one` first because it is the row drawn among strangers, which is
  * the row a person pictures when they picture this event. */
-const writtenColour = (event) => {
-  const value = (event || {}).icon_color;
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  for (const k of WORDINGS.map(([key]) => key)) if (value[k]) return value[k];
+const writtenColour = (event, keys = COLOUR_SLOTS) => {
+  for (const key of keys) {
+    const value = (event || {})[key];
+    if (typeof value === "string" && value) return value;
+    if (!value || typeof value !== "object") continue;
+    for (const k of WORDINGS.map(([key]) => key)) if (value[k]) return value[k];
+  }
   return "";
 };
 
@@ -536,6 +565,9 @@ class HomeEventsPanel extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    /* Home Assistant sets hass before it appends the panel, so the shell has
+     * to exist before anything the first load draws into it. */
+    if (!this._built) this._build();
     if (first) this._start();
     else this._laterReflect();
   }
@@ -718,6 +750,9 @@ class HomeEventsPanel extends HTMLElement {
             </div>
             <div class="list"></div>
           </aside>
+          <div class="gutter" data-gutter role="separator" aria-orientation="vertical"
+               aria-label="Width of the list" tabindex="0"
+               title="Drag to make the list wider or narrower. Double-click to put it back."></div>
           <section class="editor">
             <div class="ed-head">
               <input class="name" spellcheck="false" autocomplete="off"
@@ -746,7 +781,9 @@ class HomeEventsPanel extends HTMLElement {
       app: $(".app"), del: $('[data-act="delete"]'), tabs: $(".tabs"),
       dup: $('[data-act="duplicate"]'),
       save: $('[data-act="save"]'), head: $(".ed-head"),
+      main: $("main"), gutter: $("[data-gutter]"),
     };
+    this._mountGutter();
 
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
     this.shadowRoot.addEventListener("input", (e) => this._onInput(e));
@@ -754,7 +791,10 @@ class HomeEventsPanel extends HTMLElement {
     this.shadowRoot.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        this._save();
+        /* The same gate as the button: on the overview there is nothing to
+         * save, and asking the far end to write an event with no name only
+         * got an error back saying so. */
+        if (!this._el.save.disabled) this._save();
       }
       /* A row in the list takes focus like a button and has to answer like
        * one. It is a div because it is three pieces of text and a dot in a
@@ -772,6 +812,82 @@ class HomeEventsPanel extends HTMLElement {
       this._setDirty(true);
     });
     this._built = true;
+  }
+
+  /* The list's width, dragged.
+   *
+   * The gutter between the two panes is the handle. A drag moves it, a
+   * double-click puts it back, and the arrow keys move it for anyone not
+   * holding a mouse - it is a separator with a tabindex, so it has to answer
+   * the keyboard too. The width lands in a custom property the grid reads,
+   * and in localStorage so the next visit starts where this one left off.
+   *
+   * Only ever between 200px and three fifths of the window: a list narrower
+   * than that shows nothing but dots, and an editor narrower than two fifths
+   * cannot lay a condition row out. Under 860px the page is one column and
+   * the gutter is not drawn - see the stylesheet. */
+  _mountGutter() {
+    const gutter = this._el.gutter;
+    const main = this._el.main;
+    if (!gutter || !main) return;
+    const clamp = (px) => {
+      const most = Math.max(SIDE_MIN, Math.floor(main.clientWidth * 0.6));
+      return Math.min(most, Math.max(SIDE_MIN, Math.round(px)));
+    };
+    const apply = (px, remember) => {
+      if (px == null) {
+        main.style.removeProperty("--side-w");
+        gutter.removeAttribute("aria-valuenow");
+        if (remember) try { localStorage.removeItem(SIDE_WIDTH_KEY); } catch (e) { /* private mode */ }
+        return;
+      }
+      const w = clamp(px);
+      main.style.setProperty("--side-w", `${w}px`);
+      gutter.setAttribute("aria-valuenow", String(w));
+      if (remember) try { localStorage.setItem(SIDE_WIDTH_KEY, String(w)); } catch (e) { /* private mode */ }
+    };
+    const current = () => {
+      const set = parseFloat(main.style.getPropertyValue("--side-w"));
+      if (isFinite(set)) return set;
+      const side = this.shadowRoot.querySelector(".side");
+      return side ? side.getBoundingClientRect().width : 300;
+    };
+    let saved = null;
+    try { saved = parseFloat(localStorage.getItem(SIDE_WIDTH_KEY)); } catch (e) { /* private mode */ }
+    if (isFinite(saved)) apply(saved, false);
+
+    let drag = null;
+    gutter.addEventListener("pointerdown", (e) => {
+      if (e.button) return;
+      drag = { x: e.clientX, w: current() };
+      gutter.setPointerCapture(e.pointerId);
+      gutter.classList.add("dragging");
+      e.preventDefault();
+    });
+    gutter.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      apply(drag.w + (e.clientX - drag.x), false);
+    });
+    const done = (e) => {
+      if (!drag) return;
+      drag = null;
+      gutter.classList.remove("dragging");
+      if (gutter.hasPointerCapture && gutter.hasPointerCapture(e.pointerId)) {
+        gutter.releasePointerCapture(e.pointerId);
+      }
+      apply(current(), true);
+    };
+    gutter.addEventListener("pointerup", done);
+    gutter.addEventListener("pointercancel", done);
+    gutter.addEventListener("dblclick", () => apply(null, true));
+    gutter.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 48 : 16;
+      if (e.key === "ArrowLeft") apply(current() - step, true);
+      else if (e.key === "ArrowRight") apply(current() + step, true);
+      else if (e.key === "Home") apply(null, true);
+      else return;
+      e.preventDefault();
+    });
   }
 
   _renderList() {
@@ -1611,6 +1727,14 @@ class HomeEventsPanel extends HTMLElement {
 
          ${TEXT_SLOTS.map((slot) => this._slotHtml(slot, d, grouped)).join("")}
 
+         <div class="field"><div class="label"${tip("tint")}>Tint</div><div>
+           <select data-set="tint">
+             ${TINTS.map(([v, label]) => `<option value="${v}"` +
+               `${String(d.tint === undefined ? "" : d.tint) === v ? " selected" : ""}>` +
+               `${esc(label)}</option>`).join("")}
+           </select>
+         </div></div>
+
          ${this._timeHtml(d, grouped)}
 
          <div class="field chiprow"><div class="label"${tip("preview")}>Reads as</div><div>
@@ -1730,7 +1854,7 @@ it are underneath it">Grouped</button>
      * opened out of sight, exactly as a criterion's is. */
     const icons = slot.key === "icon" && this._hasEl("ha-icon-picker");
     const field = (path, current, hint) => {
-      if (slot.key === "icon_color") {
+      if (COLOUR_SLOTS.indexOf(slot.key) !== -1) {
         return this._colourHtml(path, current, hint || slot.hint, d);
       }
       if (!icons) {
@@ -1795,7 +1919,8 @@ it are underneath it">Grouped</button>
       PALETTE.indexOf(named) !== -1;
     /* Nothing chosen is not nothing drawn: the icon takes the severity's
      * colour, so that is what the swatch shows. */
-    const swatch = this._colourCss(set || d.severity || DEFAULT_SEVERITY);
+    const behind = path.indexOf("icon_color") === 0 ? writtenColour(d, ["color"]) : "";
+    const swatch = this._colourCss(set || behind || d.severity || DEFAULT_SEVERITY);
     const opt = (value, label, on) =>
       `<option value="${esc(value)}"${on ? " selected" : ""}>${esc(label)}</option>`;
     return `<div class="colourrow">
@@ -2806,11 +2931,16 @@ it are underneath it">Grouped</button>
     } else if (path === "severity") {
       if (value) d.severity = value; else delete d.severity;
       structural = true;
-    } else if (path === "icon_color") {
-      if (value) d.icon_color = value; else delete d.icon_color;
+    } else if (COLOUR_SLOTS.indexOf(path) !== -1) {
+      if (value) d[path] = value; else delete d[path];
       /* The swatch beside the select is part of the field, and so is the one
-       * on an empty Icon colour, which shows whatever Severity is set to. */
+       * on an empty Icon colour, which shows whatever Colour or Severity is
+       * set to. */
       structural = true;
+    } else if (path === "tint") {
+      if (value === "true") d.tint = true;
+      else if (value === "false") d.tint = false;
+      else delete d.tint;
     } else if (path === "group") {
       if (value) d.group = value; else delete d.group;
       structural = true; // the wording slots depend on it
@@ -2836,7 +2966,7 @@ it are underneath it">Grouped</button>
       } else {
         const slot = d[head] && typeof d[head] === "object" ? d[head] : (d[head] = {});
         if (value) slot[tail] = value; else delete slot[tail];
-        if (head === "icon_color") structural = true; // its swatch, again
+        if (COLOUR_SLOTS.indexOf(head) !== -1) structural = true; // its swatch, again
       }
     } else if (value === "" || value == null) {
       delete d[path];
@@ -3072,11 +3202,31 @@ select option {
 
 main {
   flex: 1; min-height: 0; display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
-  gap: 16px; padding: 16px; box-sizing: border-box;
+  /* The list, the gutter and the editor. The gutter is the 16px that used to
+     be the gap, now a column of its own so it can be taken hold of; the
+     list's width is a variable the gutter sets - see _mountGutter. */
+  grid-template-columns: minmax(${SIDE_MIN}px, var(--side-w, 300px)) 16px minmax(0, 1fr);
+  padding: 16px; box-sizing: border-box;
 }
-
+/* The handle is the gap, with a hairline that only shows when it is wanted:
+   hovered, dragged or focused. A grabbable thing that looked grabbable all
+   the time would be a frame around the list. */
+.gutter {
+  cursor: col-resize; position: relative; touch-action: none;
+  border-radius: 4px;
 }
+.gutter::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+  margin-left: -1px; border-radius: 1px;
+  background: var(--divider-color, rgba(127,127,127,.3));
+  opacity: 0; transition: opacity .15s ease;
+}
+.gutter:hover::after, .gutter.dragging::after, .gutter:focus-visible::after {
+  opacity: 1; background: var(--primary-color);
+}
+.gutter:focus { outline: none; }
+.gutter.dragging { user-select: none; }
+@media (prefers-reduced-motion: reduce) { .gutter::after { transition: none; } }
 
 .side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 /* The way back, beside the way forward. Square and quiet: it is the same
@@ -3561,6 +3711,7 @@ textarea.yaml {
   button.title { font-size: 17px; gap: 6px; }
   .build { white-space: nowrap; }
   main { display: block; }
+  .gutter { display: none; }
   .side { margin-bottom: 16px; }
   .list { overflow: visible; flex: none; }
   .editor { overflow: visible; }

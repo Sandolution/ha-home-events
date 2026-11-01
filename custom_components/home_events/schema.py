@@ -24,7 +24,7 @@ from typing import Any
 EVENT_KEYS = [
     "enabled", "category", "group", "include", "exclude", "conditions",
     "severity", "time_mode", "show_time", "title", "detail", "status", "icon",
-    "icon_color",
+    "icon_color", "color", "tint",
 ]
 # home-event-card.js: FILTER_KEYS and FILTER_OPTS
 FILTER_KEYS = [
@@ -33,7 +33,7 @@ FILTER_KEYS = [
 ]
 FILTER_OPTS = ["match"]
 # home-event-card.js: PLURAL_KEYS
-PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color",
+PLURAL_KEYS = ["title", "detail", "status", "icon", "icon_color", "color",
                "time_mode"]
 # home-event-card.js: WORDING_KEYS. Grouping makes three kinds of row - a
 # single thing on its own, a member of an open group, and the group itself -
@@ -92,13 +92,62 @@ CONDITION_KEYS = {
 WRITE_ORDER = [
     "include", "exclude", "conditions",
     "category", "group", "severity", "time_mode", "show_time",
-    "title", "detail", "status", "icon", "icon_color",
+    "title", "detail", "status", "icon", "icon_color", "color", "tint",
     "enabled",
 ]
 
-BOOL_KEYS = ["enabled", "show_time"]
+BOOL_KEYS = ["enabled", "show_time", "tint"]
 TEXT_KEYS = ["category", "title", "detail", "status", "icon", "icon_color",
-             "severity", "time_mode"]
+             "color", "severity", "time_mode"]
+# The two options that take a colour. `icon_color` paints the icon alone;
+# `color` is the row's accent - icon, status word and tint - in place of what
+# its severity would have painted. Both take the same values.
+COLOUR_KEYS = ["icon_color", "color"]
+
+# home-event-card.js: WEEKDAYS, parseDuration, parseClock. The card refuses a
+# condition it cannot evaluate - a state test with no state, a group with
+# nothing in it, a `for` that is not a duration - and it refuses it for the
+# whole library: one such condition and every card reading the library draws
+# nothing. So the same checks run here, before anything is written, and say
+# which condition and what would have been right.
+WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+CLOCK = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
+DURATION = re.compile(r"^(\d+):([0-5]?\d)(?::([0-5]?\d))?$")
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _duration_ok(value: Any) -> bool:
+    """Would the card read this as a length of time?"""
+    if _is_number(value):
+        return True
+    if _is_map(value):
+        if not value:
+            return True
+        return all(k in ("hours", "minutes", "seconds")
+                   and (_is_number(v) or (isinstance(v, str) and v.strip()
+                                          and _is_number(_number(v))))
+                   for k, v in value.items())
+    if isinstance(value, str):
+        text = value.strip()
+        if DURATION.match(text):
+            return True
+        return bool(text) and _is_number(_number(text))
+    return False
+
+
+def _number(text: str) -> Any:
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clock_ok(value: Any) -> bool:
+    m = CLOCK.match(str(value).strip()) if value is not None else None
+    return bool(m) and int(m.group(1)) <= 24 and int(m.group(2)) <= 59
 
 
 class InvalidLibrary(Exception):
@@ -170,7 +219,42 @@ def _validate_conditions(conditions: Any, where: str) -> None:
                       f"in {at}. A {kind} condition takes: "
                       + ", ".join(allowed) + ".")
         if kind in ("and", "or", "not"):
-            _validate_conditions(cond.get("conditions") or [], f"{at}.conditions")
+            inside = cond.get("conditions")
+            if not isinstance(inside, list) or not inside:
+                _fail(f'A "{kind}" condition holds other conditions, and {at} '
+                      "holds none. Put at least one condition inside it, or "
+                      "remove it.")
+            _validate_conditions(inside, f"{at}.conditions")
+            continue
+        if kind == "state" and cond.get("state") is None \
+                and cond.get("state_not") is None:
+            _fail(f'The state condition in {at} says neither "state" nor '
+                  '"state_not", so there is nothing for it to test. Give it '
+                  "the state the entity has to be in (or not be in).")
+        if kind == "numeric_state" and cond.get("above") is None \
+                and cond.get("below") is None:
+            _fail(f"The numeric state condition in {at} has neither "
+                  '"above" nor "below". Give it at least one bound.')
+        if kind == "time":
+            if cond.get("after") is None and cond.get("before") is None \
+                    and cond.get("weekday") is None:
+                _fail(f'The time condition in {at} says no "after", "before" '
+                      'or "weekday", so it would never match anything. Give it '
+                      "a window, a day, or both.")
+            for key in ("after", "before"):
+                if cond.get(key) is not None and not _clock_ok(cond[key]):
+                    _fail(f'"{key}: {cond[key]}" in {at} is not a time of day. '
+                          'Write it as HH:MM or HH:MM:SS, e.g. "20:00".')
+            days = cond.get("weekday")
+            if days is not None:
+                for day in (days if isinstance(days, list) else [days]):
+                    if str(day)[:3].lower() not in WEEKDAYS:
+                        _fail(f'"weekday: {day}" in {at} is not a day. Use '
+                              + ", ".join(WEEKDAYS) + ".")
+        if cond.get("for") is not None and not _duration_ok(cond["for"]):
+            _fail(f'"for: {cond["for"]!r}" in {at} is not a duration. Write '
+                  '"HH:MM:SS", a number of seconds, or a mapping of hours, '
+                  "minutes and seconds.")
 
 
 def _validate_event(name: str, event: Any) -> None:
@@ -182,6 +266,12 @@ def _validate_event(name: str, event: Any) -> None:
         if key not in EVENT_KEYS:
             _fail(f'Unknown option "{key}" on {where}. The options are: '
                   + ", ".join(EVENT_KEYS) + ".")
+    # `group:` with nothing after it is None once YAML is done with it, and
+    # the card refuses None where it wanted a word or true/false - for the
+    # whole library. An empty key is an empty box: nothing was written, so
+    # the key goes, the same way an empty wording does.
+    for key in [k for k, v in event.items() if v is None]:
+        del event[key]
 
     if not event.get("include"):
         _fail(f'Event "{name}" needs an "include" saying which entities it '
@@ -233,17 +323,19 @@ def _validate_event(name: str, event: Any) -> None:
     # list of four words. An icon that quietly kept the colour it already had
     # is the hardest kind of typo to find, so a name that is not a name is
     # refused here, before it is written.
-    colours = event.get("icon_color")
-    for value in (colours.values() if _is_map(colours) else [colours]):
-        if value is None or value == "":
-            continue
-        if not icon_color_ok(value):
-            _fail(f"Icon colour {value!r} on {where} is not a colour. Use one "
-                  "of " + ", ".join(SEVERITIES + TONES) + " - the colours the "
-                  "card paints by itself - or a Home Assistant palette name "
-                  "(" + ", ".join(PALETTE[3:9]) + ", ...), or a value CSS "
-                  "takes: #rrggbb, rgb(...), hsl(...), color-mix(...) or "
-                  "var(--your-variable).")
+    for key in COLOUR_KEYS:
+        colours = event.get(key)
+        for value in (colours.values() if _is_map(colours) else [colours]):
+            if value is None or value == "":
+                continue
+            if not icon_color_ok(value):
+                what = "Icon colour" if key == "icon_color" else "Colour"
+                _fail(f"{what} {value!r} on {where} is not a colour. Use one "
+                      "of " + ", ".join(SEVERITIES + TONES) + " - the colours "
+                      "the card paints by itself - or a Home Assistant palette "
+                      "name (" + ", ".join(PALETTE[3:9]) + ", ...), or a value "
+                      "CSS takes: #rrggbb, rgb(...), hsl(...), color-mix(...) "
+                      "or var(--your-variable).")
 
     # A word per kind of row, like the wordings, so a group counting down to
     # its last end can be said differently from the timers inside it. An empty
