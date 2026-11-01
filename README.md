@@ -120,10 +120,6 @@ card exports for other code.
 
 Home Assistant 2024.12 or newer.
 
-## Built with
-
-[Claude Code](https://claude.com/claude-code).
-
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Built with [Claude Code](https://claude.com/claude-code).
