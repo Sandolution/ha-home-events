@@ -431,6 +431,7 @@ friendly name; `{area}` is the room from the registry.
 | `{attr.x}` | Any attribute, by name. |
 | `{state@sensor.other}` | Some other entity's state, not this one's. |
 | `{n}` | How many rows this one stands for, on a grouped event. |
+| `{areas}` | On a group's own row: the rooms of its rows, the room with the most rows first and counted when it has more than one, e.g. `Living Room (2), Garden`. |
 | `{entry.x}` | A field of the entry a row stands for, with `group: entries`. `{entry}` for a list of plain values. |
 
 A `|` inside the braces runs a replacement on what was read, written as
@@ -619,8 +620,8 @@ asked. Only the written value counts.
 The detail line is for what the title did not already say, so it is dropped
 when the two are equal. `title: {one: "{area}"}` gives *Bath Room* and not
 *Bath Room* over *Bath Room*, the room being where the detail line falls back
-to anyway. Same reason a member's detail drops the room its group already
-names.
+to anyway. A row inside a group keeps its room, also when the group is named
+after it.
 
 ### Naming a Home Assistant group
 
@@ -695,7 +696,7 @@ devices_offline:
 
 | | |
 |---|---|
-| the group row | the entity itself: its icon and state, and holding it opens the entity |
+| the group row | the entity itself: its icon and state, and holding it opens the entity; its detail line says the rooms of the entries (`{areas}`) |
 | a row inside | titled with the entry's `name` and with its `area` beside it, unless worded otherwise; `{entry.x}` reads any field of it |
 | a tap on a row inside | opens the entry's `entity_id`, or failing that its device's page from `device_id` |
 | `{n}` | how many entries the list holds |
@@ -706,19 +707,21 @@ the group. An empty list is the entity's own row, or with `always_group` a
 group of none. The conditions are asked of the entity, not of the entries:
 they are not entities and have no state.
 
-### Why a grouped row's detail line is usually empty
+### Where a grouped row says its room
 
-Because the room is already on its title line. "Kitchen" over "Kitchen" is not
-a second fact, so the line is left empty rather than filled with a repeat.
+A room group says its room on the title line, so its detail line is empty:
+"Kitchen" over "Kitchen" is not a second fact. Give the group a `title` of its
+own ("Lights") and the room **moves down** to the detail line, because the
+title no longer says it.
 
-Two things change it, and both are deliberate:
+A group with no room of its own (`group: all`, `group: entries`) says the
+rooms of its rows on the detail line: `Garden` when they share one,
+`Living Room (2), Garden, Dining Room` when they don't. Rows without a room
+are left out of it, and with none at all the line stays empty.
 
-- give the group a `title` of its own ("Lights") and the room **moves down**
-  to the detail line, because the title no longer says it
-- write a `detail` template and it is drawn, grouped or not
-
-So an empty detail line on a grouped row means nothing was asked for. It is
-not the card declining to draw one.
+Either way the rows inside keep their own room, so a folded group and an open
+one both say where to go. A `detail` template replaces all of this, grouped or
+not; `{areas}` puts the list in one of your own.
 
 ### What time a grouped row is telling
 

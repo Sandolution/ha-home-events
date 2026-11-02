@@ -224,6 +224,7 @@ const PLACEHOLDERS = [
   ["{attr.friendly_name}", "Kitchen | Ceiling", "the whole name, room and all"],
   ["{state@sensor.other}", "-", "some other entity's state, not this one's"],
   ["{n}", "-", "how many rows this one stands for, on a grouped event"],
+  ["{areas}", "-", "the rooms of a group's rows, most rows first"],
   ["{entry.name}", "-", "a field of the entry this row stands for, grouping per entry"],
 ];
 
@@ -1650,6 +1651,12 @@ class HomeEventsPanel extends HTMLElement {
     if (this._groupOf(d)) {
       row.push(["{n}", perEntry && Array.isArray(list) ? list.length : "",
         "how many rows the group stands for"]);
+      /* The card's own summary, so the menu shows what the group row will. */
+      const rooms = perEntry
+        ? (Array.isArray(list) ? list : []).map((x) => ({ area: x && typeof x === "object" ? x.area : null }))
+        : ids.map((x) => ({ area: this._areaNameOf(x, (this._hass.entities || {})[x] || {}) }));
+      row.push(["{areas}", this._engine && this._engine.areaList ? this._engine.areaList(rooms) : "",
+        "the rooms of the group's rows"]);
     }
     /* Every attribute any covered entity has, read on the sample where it has
      * it: an event over twenty lights should offer what a dimmable one says
@@ -1720,7 +1727,7 @@ class HomeEventsPanel extends HTMLElement {
           const t = (target || "").trim();
           let why = "";
           if (t && !states[t]) why = `there is no entity ${t}`;
-          else if (["name", "area", "state", "state.raw", "n"].indexOf(p) !== -1) why = "";
+          else if (["name", "area", "areas", "state", "state.raw", "n"].indexOf(p) !== -1) why = "";
           else if (p.startsWith("attr.")) {
             const a = p.slice(5);
             const known = t ? a in ((states[t] || {}).attributes || {}) : has.has(a);

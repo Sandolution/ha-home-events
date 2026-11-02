@@ -340,7 +340,9 @@
  * A room group says the room on its title line, which is why its detail line
  * is empty unless something is written there: repeating the room underneath
  * itself is not a second fact. Give the group a `title` of its own and the
- * room moves down to the detail line rather than disappearing.
+ * room moves down to the detail line rather than disappearing. A group with
+ * no room of its own (`all`, `entries`) says the rooms of its rows there,
+ * `{areas}`, and every row inside keeps its own room.
  *
  * The three are what lets a name suit where it is read. `title: {one:
  * Ventilation, each: "{area}", many: Ventilation}` puts Ventilation on a lone
@@ -494,6 +496,21 @@ function entryVars(entry) {
     out.entry = entry;
   }
   return out;
+}
+
+/* The rooms of a group's rows, for a group with no room of its own: the room
+ * with the most rows first, counted when it has more than one, ties in the
+ * order the rows came. "Living Room (2), Garden". A folded group that says
+ * nothing about where is a group you have to open to know where to walk. */
+function areaList(rows) {
+  const counts = new Map();
+  for (const r of rows) {
+    if (r && r.area) counts.set(r.area, (counts.get(r.area) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([area, n]) => (n > 1 && counts.size > 1 ? `${area} (${n})` : area))
+    .join(", ");
 }
 
 /* Which renderer an entity gets. Domain knowledge, not configuration: a cover
@@ -2932,8 +2949,14 @@ class HomeEventCard extends HTMLElement {
       const counting = gmode === "until" || gmode === "remaining";
       e.at = counting ? Math.max(...stamps) : Math.min(...stamps);
     }
-    const row = this._applyConfig(e, wording(cfg, "many"), id, {
-      name: e.title, area: e.area, n: list.length,
+    /* The rows' rooms rather than the entity's own: where a summary sensor
+     * sits says nothing about where its entries are. A written `detail:`
+     * still wins, and with no rooms among the entries the entity's stays. */
+    const areas = areaList(members);
+    const many = wording(cfg, "many");
+    if (areas && (many.detail == null || many.detail === "")) e.sub = areas;
+    const row = this._applyConfig(e, many, id, {
+      name: e.title, area: e.area, n: list.length, areas,
     });
     row.key = `${name}:${id}`;
     if (members.length) row.members = members;
@@ -3140,7 +3163,8 @@ class HomeEventCard extends HTMLElement {
       const at = stamps.length
         ? (counting ? Math.max(...stamps) : Math.min(...stamps))
         : (isFinite(b.at) ? b.at : null);
-      const vars = { n: n, name: label, area: b.area || "" };
+      const areas = b.area || areaList(members);
+      const vars = { n: n, name: label, area: b.area || "", areas };
       const e = {
         key: name + ":" + (b.area || "all"),
         category: cfg.category || GENERIC_CATEGORY,
@@ -3156,14 +3180,10 @@ class HomeEventCard extends HTMLElement {
          * lamp the index happened to reach is answering a question nobody
          * asked. `members` is what a click gets instead - see _handleClick. */
         entity: "",
-        /* The room is dropped from a child that would only repeat the row
-         * above it - the detail line is for what this row adds, and under
-         * Kitchen a second Kitchen adds nothing. An `all` group has no
-         * room to repeat, a solo row above kept its own, and a `detail:`
-         * template that says something else survives. */
-        members: members.map((m) =>
-          m.sub && m.sub === b.area ? { ...m, sub: "" } : m
-        ),
+        /* Every member keeps its room, also under a group named after that
+         * room: a room is never taken off a row, whatever the row above
+         * says. */
+        members,
       };
       const row = this._applyConfig(e, wording(cfg, "many"), b.ids[0], vars);
       /* A room group says the room on its title line. A `title:` template
@@ -3172,6 +3192,8 @@ class HomeEventCard extends HTMLElement {
        * and no way to tell which room either was about. So it moves to the
        * detail line, unless a `detail:` template has claimed that too. */
       if (b.area && row.title !== label && !row.sub) row.sub = b.area;
+      /* A group with no room of its own says the rooms of its rows. */
+      if (!b.area && !row.sub) row.sub = areas;
       out.push(ev(row));
     }
   }
@@ -4359,7 +4381,7 @@ export function passingEntities(hass, ids, conditions) {
 /* `iconColorCss` for the Event Manager's colour swatches: the table that
  * paints the rows is the table the form should be showing, and a second
  * copy of it in the panel would be a copy that drifts. */
-export { HomeEventCard, CARD_BUILD, iconColorCss };
+export { HomeEventCard, CARD_BUILD, iconColorCss, areaList };
 
 /* Not defined straight away. On a browser without scoped custom element
  * registries, Home Assistant's app installs a polyfill that replaces
