@@ -4361,7 +4361,16 @@ export function passingEntities(hass, ids, conditions) {
  * copy of it in the panel would be a copy that drifts. */
 export { HomeEventCard, CARD_BUILD, iconColorCss };
 
-if (!customElements.get("home-event-card")) {
+/* Not defined straight away. On a browser without scoped custom element
+ * registries, Home Assistant's app installs a polyfill that replaces
+ * window.customElements, and this module is loaded with add_extra_js_url,
+ * at the same time as that app rather than after it as a dashboard resource
+ * is. A card defined before the swap is unknown to the new registry, and
+ * the dashboard reports "Custom element doesn't exist" for it. The app
+ * defines home-assistant after the swap, so the card waits for that; the
+ * timer is for a page that never defines it. */
+function defineCard() {
+  if (customElements.get("home-event-card")) return;
   customElements.define("home-event-card", HomeEventCard);
 
   /* Deliberate load marker, same reasoning as the sibling cards: HA hides the
@@ -4382,4 +4391,11 @@ if (!customElements.get("home-event-card")) {
     description: "What the house is doing right now, grouped and self-discovering.",
     preview: false,
   });
+}
+
+if (customElements.get("home-assistant")) {
+  defineCard();
+} else {
+  customElements.whenDefined("home-assistant").then(defineCard);
+  setTimeout(defineCard, 10000);
 }
