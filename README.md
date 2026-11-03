@@ -78,7 +78,7 @@ collapsible: true
 |---|---|---|---|
 | `type` | `custom:home-event-card` | | **Required.** |
 | `group_by` | `category`, `area`, `severity` or `none` | `category` | What the sections are. |
-| `sort` | `recent`, `duration` or `name` | the library's `sort` | How rows are ordered within a section. Set here, it overrides the library. |
+| `sort` | `recent`, `duration` or `name` | the library's `sort` | How rows are ordered within a section, and inside its groups. Set here, it overrides the library. |
 | `max` | a whole number, 1 or more | `14` | How many rows the card draws in total, shared out between the sections. |
 | `max_per_section` | a whole number, 0 or more | `0` | A hard limit for each section, before the rows are shared out. `0` leaves it to `max`. |
 | `hide_when_empty` | `true` or `false` | `false` | Whether the card disappears when nothing is happening. |

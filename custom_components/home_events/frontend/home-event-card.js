@@ -142,7 +142,9 @@
  *
  *   group_by:        category | area | severity | none   default category
  *   sort:            recent | duration | name. Overrides whatever the library
- *                    says; leave it out to follow the library
+ *                    says; leave it out to follow the library. The rows inside
+ *                    a group follow it too; name breaks a tie on the line
+ *                    underneath
  *   max:             integer, default 14: how many rows the card draws in
  *                    total. Shared out rather than sliced: every section keeps
  *                    at least one row and the biggest give theirs up first, so
@@ -3520,6 +3522,11 @@ class HomeEventCard extends HTMLElement {
   _sortEvents(list, sort) {
     const mode = sort || this._config.sort;
     const now = Date.now();
+    /* The rows inside a group read in the same order as the rows around it.
+     * They used to keep the order they came in - a group's entity_id list, or
+     * whatever order Device Watch wrote its devices - so a section sorted by
+     * name opened onto a drawer that was not. */
+    for (const e of list) if (e.members) this._sortEvents(e.members, mode);
     return list.sort((a, b) => {
       const s = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
       if (s) return s;
@@ -3530,7 +3537,11 @@ class HomeEventCard extends HTMLElement {
       if (down(a.mode) && down(b.mode)) {
         return (a.at || Infinity) - (b.at || Infinity);
       }
-      if (mode === "name") return a.title.localeCompare(b.title);
+      /* Then the line underneath: three lamps called Ceiling are told apart by
+       * their rooms, and those should read A to Z as well. */
+      if (mode === "name") {
+        return a.title.localeCompare(b.title) || (a.sub || "").localeCompare(b.sub || "");
+      }
       if (mode === "duration") {
         /* Longest-running first: the light that has been on for three hours is
          * the one worth noticing, not the one switched on a minute ago. */

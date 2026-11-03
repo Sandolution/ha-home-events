@@ -33,7 +33,7 @@ That is a complete, working card. Everything below is optional.
 | Option | Values | Default | What it is |
 |---|---|---|---|
 | `group_by` | `category`, `area`, `severity` or `none` | `category` | What the sections are. Anything else is a configuration error. |
-| `sort` | `recent`, `duration` or `name` | the library's `sort` | How rows are ordered within a section. Set here, it overrides the library; leave it out to follow the library. Anything else is a configuration error. |
+| `sort` | `recent`, `duration` or `name` | the library's `sort` | How rows are ordered within a section, and the rows inside a group with them. `name` is the title A to Z, then the line underneath, so two rows called Ceiling read by room. Alerts still come first and countdowns soonest first. Set here, it overrides the library; leave it out to follow the library. Anything else is a configuration error. |
 | `max` | a whole number, 1 or more | `14` | How many rows the card draws in total, shared out between the sections rather than sliced off the end. See below. |
 | `max_per_section` | a whole number, 0 or more | `0` | A hard limit for one section, applied before the budget is shared. `0` leaves it to `max`. |
 | `hide_when_empty` | `true` or `false` | `false` | Whether the card disappears when nothing is happening. A card that vanishes leaves a hole in a sections layout, and a hole reads as a broken card rather than as a quiet house. |
@@ -279,7 +279,7 @@ events:
 
 | Key | Values | Default | What it is |
 |---|---|---|---|
-| `sort` | `recent`, `duration` or `name` | `recent` | The default order of rows in a section, for every card that doesn't set its own. |
+| `sort` | `recent`, `duration` or `name` | `recent` | The default order of rows in a section (and inside its groups), for every card that doesn't set its own. |
 | `non_areas` | a list of area ids or names | none | Areas that are filing cabinets rather than places. |
 | `categories` | a list of sections | none | The sections, in the order they read. Each has an `id` (required), a `label` (the heading; the id when left out) and optionally its own `sort` (`recent`, `duration` or `name`). |
 | `events` | a mapping of event name to event | **required**, may be empty | What the house is watching. See [An event](#an-event). |
