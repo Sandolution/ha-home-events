@@ -500,17 +500,17 @@ function entryVars(entry) {
   return out;
 }
 
-/* The rooms of a group's rows, for a group with no room of its own: the room
- * with the most rows first, counted when it has more than one, ties in the
- * order the rows came. "Living Room (2), Garden". A folded group that says
- * nothing about where is a group you have to open to know where to walk. */
+/* The rooms of a group's rows, for a group with no room of its own: A to Z,
+ * each counted when it has more than one row. "Garden, Living Room (2)". A
+ * folded group that says nothing about where is a group you have to open to
+ * know where to walk. */
 function areaList(rows) {
   const counts = new Map();
   for (const r of rows) {
     if (r && r.area) counts.set(r.area, (counts.get(r.area) || 0) + 1);
   }
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([area, n]) => (n > 1 && counts.size > 1 ? `${area} (${n})` : area))
     .join(", ");
 }

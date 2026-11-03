@@ -224,7 +224,7 @@ const PLACEHOLDERS = [
   ["{attr.friendly_name}", "Kitchen | Ceiling", "the whole name, room and all"],
   ["{state@sensor.other}", "-", "some other entity's state, not this one's"],
   ["{n}", "-", "how many rows this one stands for, on a grouped event"],
-  ["{areas}", "-", "the rooms of a group's rows, most rows first"],
+  ["{areas}", "-", "the rooms of a group's rows, A to Z"],
   ["{entry.name}", "-", "a field of the entry this row stands for, grouping per entry"],
 ];
 

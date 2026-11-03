@@ -431,7 +431,7 @@ friendly name; `{area}` is the room from the registry.
 | `{attr.x}` | Any attribute, by name. |
 | `{state@sensor.other}` | Some other entity's state, not this one's. |
 | `{n}` | How many rows this one stands for, on a grouped event. |
-| `{areas}` | On a group's own row: the rooms of its rows, the room with the most rows first and counted when it has more than one, e.g. `Living Room (2), Garden`. |
+| `{areas}` | On a group's own row: the rooms of its rows, A to Z, each counted when it has more than one row, e.g. `Garden, Living Room (2)`. |
 | `{entry.x}` | A field of the entry a row stands for, with `group: entries`. `{entry}` for a list of plain values. |
 
 A `|` inside the braces runs a replacement on what was read, written as
@@ -716,7 +716,7 @@ title no longer says it.
 
 A group with no room of its own (`group: all`, `group: entries`) says the
 rooms of its rows on the detail line: `Garden` when they share one,
-`Living Room (2), Garden, Dining Room` when they don't. Rows without a room
+`Dining Room, Garden, Living Room (2)` when they don't. Rows without a room
 are left out of it, and with none at all the line stays empty.
 
 Either way the rows inside keep their own room, so a folded group and an open
